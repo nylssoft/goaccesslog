@@ -28,7 +28,7 @@ type LogLine struct {
 
 func main() {
 	if len(os.Args) < 2 {
-		log.Fatal("Usage: goaccesslog <nginx-logfile-name>")
+		log.Fatal("Usage: goaccesslog <nginx-logfile-name>...")
 	}
 	db, err := connectDatabase()
 	if err != nil {
@@ -45,9 +45,11 @@ func main() {
 		log.Fatal(err)
 	}
 	defer hashStmt.Close()
-	err = insertAccessLogFile(insertStmt, hashStmt, os.Args[1])
-	if err != nil {
-		log.Fatal(err)
+	for idx := 1; idx < len(os.Args); idx++ {
+		err = insertAccessLogFile(insertStmt, hashStmt, os.Args[idx])
+		if err != nil {
+			log.Fatal(err)
+		}
 	}
 }
 
@@ -77,7 +79,7 @@ func insertAccessLogFile(insertStmt, hashStmt *sql.Stmt, fileName string) error 
 			}
 		}
 	}
-	fmt.Printf("Processed %d lines in log file. Inserted %d row(s). Skipped %d row(s).\n", len(lines), insertCnt, skipCnt)
+	fmt.Printf("Processed %d lines in log file. Inserted %d row(s). Skipped %d row(s).\n", insertCnt+skipCnt, insertCnt, skipCnt)
 	return nil
 }
 
@@ -112,6 +114,12 @@ func connectDatabase() (*sql.DB, error) {
 			env varchar,
 			hash varchar(100)
 		)`
+	_, err = db.Exec(query)
+	if err != nil {
+		db.Close()
+		return nil, err
+	}
+	query = "create index if not exists accesslog_hash_idx on accesslog (hash)"
 	_, err = db.Exec(query)
 	if err != nil {
 		db.Close()
