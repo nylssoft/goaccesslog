@@ -17,13 +17,15 @@ import (
 )
 
 type LogLine struct {
-	ipaddress  string
-	date       time.Time
-	request    string
-	statuscode int
-	bytes      int
-	duration   int
-	env        string
+	remote_addr    string
+	msec           int
+	time_local     time.Time
+	request        string
+	request_length int
+	request_time   int
+	status         int
+	bytes_sent     int
+	user_agent     string
 }
 
 func main() {
@@ -35,7 +37,7 @@ func main() {
 		log.Fatal(err)
 	}
 	defer db.Close()
-	insertStmt, err := db.Prepare("INSERT INTO accesslog (ipaddress,dateutc,datestr,request,status,bytes,duration,env,hash) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)")
+	insertStmt, err := db.Prepare("INSERT INTO accesslog (remote_addr,msec,time_local,request,request_length,request_time,status,bytes_sent,user_agent,hash) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)")
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -104,14 +106,15 @@ func connectDatabase() (*sql.DB, error) {
 		return nil, err
 	}
 	query := `create table if not exists accesslog (
-			ipaddress varchar(32),
-			dateutc bigint,
-			datestr varchar(100),
+			remote_addr varchar(32),
+			msec bigint,
+			time_local varchar(100),
 			request varchar,
+			request_length int,
+			request_time int,
 			status int,
-			bytes int,
-			duration int,
-			env varchar,
+			bytes_sent int,
+			user_agent varchar,
 			hash varchar(100)
 		)`
 	_, err = db.Exec(query)
@@ -129,8 +132,6 @@ func connectDatabase() (*sql.DB, error) {
 }
 
 func insertLogLine(insertStmt, hashStmt *sql.Stmt, logLine LogLine, hash string) (bool, error) {
-	dateutc := logLine.date.Unix()
-	datestr := logLine.date.Format(time.RFC3339)
 	rows, err := hashStmt.Query(hash)
 	if err != nil {
 		return false, err
@@ -138,7 +139,9 @@ func insertLogLine(insertStmt, hashStmt *sql.Stmt, logLine LogLine, hash string)
 	defer rows.Close()
 	skipped := true
 	if !rows.Next() {
-		_, err = insertStmt.Exec(logLine.ipaddress, dateutc, datestr, logLine.request, logLine.statuscode, logLine.bytes, logLine.duration, logLine.env, hash)
+		msec := logLine.msec
+		time_local := logLine.time_local.Format(time.RFC3339)
+		_, err = insertStmt.Exec(logLine.remote_addr, msec, time_local, logLine.request, logLine.request_length, logLine.request_time, logLine.status, logLine.bytes_sent, logLine.user_agent, hash)
 		if err != nil {
 			return false, err
 		}
@@ -149,14 +152,16 @@ func insertLogLine(insertStmt, hashStmt *sql.Stmt, logLine LogLine, hash string)
 
 func parseLogLine(line string) (LogLine, bool) {
 	logLine := LogLine{}
-	logLine.ipaddress, line = parseIpAddress(line)
-	if len(logLine.ipaddress) > 0 {
-		logLine.date, line = parseDate(line)
+	logLine.remote_addr, line = parseIpAddress(line)
+	if len(logLine.remote_addr) > 0 {
+		logLine.time_local, line = parseDate(line)
+		logLine.msec, line = parseMsec(line)
 		logLine.request, line = parseRequest(line)
-		logLine.statuscode, line = parseInt(line)
-		logLine.bytes, line = parseInt(line)
-		logLine.duration, line = parseDuration(line)
-		logLine.env, _ = parseEnv(line)
+		logLine.request_length, line = parseInt(line)
+		logLine.status, line = parseInt(line)
+		logLine.bytes_sent, line = parseInt(line)
+		logLine.request_time, line = parseDuration(line)
+		logLine.user_agent, _ = parseEnv(line)
 		return logLine, true
 	}
 	return logLine, false
@@ -190,6 +195,13 @@ func parseRequest(line string) (string, string) {
 
 func parseEnv(line string) (string, string) {
 	return extractString(line, '"', '"')
+}
+
+func parseMsec(line string) (int, string) {
+	sec, r1 := parseInt(line)
+	// skip .
+	msec, r2 := parseInt(r1[1:])
+	return sec*1000 + msec, r2
 }
 
 func parseInt(line string) (int, string) {
@@ -230,7 +242,7 @@ func extractString(line string, bracketStart, bracketEnd rune) (string, string) 
 		if c == bracketStart && !startFound {
 			startFound = true
 		} else if c == bracketEnd && startFound {
-			return sb.String(), line[idx:]
+			return sb.String(), line[idx+1:]
 		} else if startFound {
 			sb.WriteRune(c)
 		}
