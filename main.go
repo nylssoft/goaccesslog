@@ -102,7 +102,7 @@ func findSuspiciousRequests(db *sql.DB) {
 	// find requests from IP addresses that failed more than 100 times or redirects more than 100 times
 	rows, err = db.Query(
 		"select cnt,remote_addr,request_uri,status from " +
-			"(select count(remote_addr) as cnt,remote_addr,request_uri,status from accesslog where (status >= 400 or status = 302) " +
+			"(select count(remote_addr) as cnt,remote_addr,request_uri,status from accesslog where (status >= 400 or status = 301) " +
 			"group by remote_addr,request_uri,status) as tmp where " +
 			"tmp.cnt > 100 and tmp.remote_addr not in (select ip from blockedips)")
 	if err != nil {
