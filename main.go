@@ -17,15 +17,17 @@ import (
 )
 
 type LogLine struct {
-	remote_addr    string
-	msec           int
-	time_local     time.Time
-	request        string
-	request_length int
-	request_time   int
-	status         int
-	bytes_sent     int
-	user_agent     string
+	remote_addr      string
+	msec             int
+	time_local       time.Time
+	request_method   string
+	request_uri      string
+	request_protocol string
+	request_length   int
+	request_time     int
+	status           int
+	bytes_sent       int
+	user_agent       string
 }
 
 func main() {
@@ -37,7 +39,7 @@ func main() {
 		log.Fatal(err)
 	}
 	defer db.Close()
-	insertStmt, err := db.Prepare("INSERT INTO accesslog (remote_addr,msec,time_local,request,request_length,request_time,status,bytes_sent,user_agent,hash) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)")
+	insertStmt, err := db.Prepare("INSERT INTO accesslog (remote_addr,msec,time_local,request_method,request_uri,request_protocol,request_length,request_time,status,bytes_sent,user_agent,hash) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)")
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -53,6 +55,95 @@ func main() {
 			log.Fatal(err)
 		}
 	}
+	findSuspiciousRequests(db)
+	writeBlockedIps(db)
+}
+
+func writeBlockedIps(db *sql.DB) {
+	fmt.Println("Block IP addresses")
+	fmt.Println("------------------")
+	rows, err := db.Query(
+		"select ip from blockedips order by ip asc")
+	if err != nil {
+		log.Fatal(err)
+	}
+	for rows.Next() {
+		var ip string
+		err = rows.Scan(&ip)
+		if err != nil {
+			log.Fatal(err)
+		}
+		fmt.Println(ip)
+	}
+}
+
+func findSuspiciousRequests(db *sql.DB) {
+	// find requests from IP addresses that failed and used unexpected request methods or took more than 500ms
+	rows, err := db.Query(
+		"select remote_addr,request_method,request_uri,request_time,status " +
+			"from accesslog where status >= 400 and (request_method not in ('GET','POST','PUT') or request_time > 500) and " +
+			"remote_addr not in (select ip from blockedips)")
+	if err != nil {
+		log.Fatal(err)
+	}
+	blockips := make(map[string]bool)
+	for rows.Next() {
+		var remote_addr, request_method, request_uri string
+		var request_time, status int
+		err = rows.Scan(&remote_addr, &request_method, &request_uri, &request_time, &status)
+		if err != nil {
+			log.Fatal(err)
+		}
+		if !isValidUri(request_uri) {
+			fmt.Println("Block IP", remote_addr, request_method, request_uri, request_time, status)
+			blockips[remote_addr] = true
+		}
+	}
+	// find requests from IP addresses that failed more than 100 times or redirects more than 100 times
+	rows, err = db.Query(
+		"select cnt,remote_addr,request_uri,status from " +
+			"(select count(remote_addr) as cnt,remote_addr,request_uri,status from accesslog where (status >= 400 or status = 302) " +
+			"group by remote_addr,request_uri,status) as tmp where " +
+			"tmp.cnt > 100 and tmp.remote_addr not in (select ip from blockedips)")
+	if err != nil {
+		log.Fatal(err)
+	}
+	for rows.Next() {
+		var remote_addr, request_uri string
+		var cnt, status int
+		err = rows.Scan(&cnt, &remote_addr, &request_uri, &status)
+		if err != nil {
+			log.Fatal(err)
+		}
+		if !blockips[remote_addr] && !isValidUri(request_uri) {
+			fmt.Println("Block IP", remote_addr, request_uri, status, cnt)
+			blockips[remote_addr] = true
+		}
+	}
+	if len(blockips) > 0 {
+		stmt, err := db.Prepare("INSERT INTO blockedips (ip) VALUES ($1)")
+		if err != nil {
+			log.Fatal(err)
+		}
+		defer stmt.Close()
+		for ip := range blockips {
+			_, err = stmt.Exec(ip)
+			if err != nil {
+				log.Fatal(err)
+			}
+		}
+	}
+}
+
+func isValidUri(uri string) bool {
+	patterns := []string{"api", "arkanoid", "backgammon", "chess", "contacts", "diary", "documents", "index", "makeadate", "notes", "pwdman", "password", "skat", "slideshow", "tetris", "usermgmt", "view"}
+	test := strings.ToLower(uri)
+	for _, p := range patterns {
+		if strings.Contains(test, p) {
+			return true
+		}
+	}
+	return false
 }
 
 func insertAccessLogFile(insertStmt, hashStmt *sql.Stmt, fileName string) error {
@@ -109,7 +200,9 @@ func connectDatabase() (*sql.DB, error) {
 			remote_addr varchar(32),
 			msec bigint,
 			time_local varchar(100),
-			request varchar,
+			request_method varchar(32),
+			request_uri varchar,
+			request_protocol varchar(32),
 			request_length int,
 			request_time int,
 			status int,
@@ -128,6 +221,12 @@ func connectDatabase() (*sql.DB, error) {
 		db.Close()
 		return nil, err
 	}
+	query = `create table if not exists blockedips (ip varchar(32))`
+	_, err = db.Exec(query)
+	if err != nil {
+		db.Close()
+		return nil, err
+	}
 	return db, nil
 }
 
@@ -141,7 +240,7 @@ func insertLogLine(insertStmt, hashStmt *sql.Stmt, logLine LogLine, hash string)
 	if !rows.Next() {
 		msec := logLine.msec
 		time_local := logLine.time_local.Format(time.RFC3339)
-		_, err = insertStmt.Exec(logLine.remote_addr, msec, time_local, logLine.request, logLine.request_length, logLine.request_time, logLine.status, logLine.bytes_sent, logLine.user_agent, hash)
+		_, err = insertStmt.Exec(logLine.remote_addr, msec, time_local, logLine.request_method, logLine.request_uri, logLine.request_protocol, logLine.request_length, logLine.request_time, logLine.status, logLine.bytes_sent, logLine.user_agent, hash)
 		if err != nil {
 			return false, err
 		}
@@ -156,7 +255,17 @@ func parseLogLine(line string) (LogLine, bool) {
 	if len(logLine.remote_addr) > 0 {
 		logLine.time_local, line = parseDate(line)
 		logLine.msec, line = parseMsec(line)
-		logLine.request, line = parseRequest(line)
+		logLine.request_uri, line = parseRequest(line)
+		idx := strings.Index(logLine.request_uri, " ")
+		if idx > 0 && idx < 32 {
+			logLine.request_method = logLine.request_uri[0:idx]
+			logLine.request_uri = logLine.request_uri[idx+1:]
+		}
+		idx = strings.Index(logLine.request_uri, " ")
+		if idx > len(logLine.request_uri)-32 {
+			logLine.request_protocol = logLine.request_uri[idx+1:]
+			logLine.request_uri = logLine.request_uri[0:idx]
+		}
 		logLine.request_length, line = parseInt(line)
 		logLine.status, line = parseInt(line)
 		logLine.bytes_sent, line = parseInt(line)
