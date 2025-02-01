@@ -136,7 +136,7 @@ func findSuspiciousRequests(db *sql.DB) {
 }
 
 func isValidUri(uri string) bool {
-	patterns := []string{"api", "arkanoid", "backgammon", "chess", "contacts", "diary", "documents", "index", "makeadate", "notes", "pwdman", "password", "skat", "slideshow", "tetris", "usermgmt", "view"}
+	patterns := []string{"api", "arkanoid", "backgammon", "chess", "contacts", "diary", "documents", "index", "makeadate", "notes", "pwdman", "password", "skat", "slideshow", "tetris", "usermgmt", "view", "webpack"}
 	test := strings.ToLower(uri)
 	for _, p := range patterns {
 		if strings.Contains(test, p) {
