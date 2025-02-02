@@ -18,7 +18,6 @@ import (
 
 type LogLine struct {
 	remote_addr      string
-	msec             int
 	time_local       time.Time
 	request_method   string
 	request_uri      string
@@ -32,14 +31,47 @@ type LogLine struct {
 
 func main() {
 	if len(os.Args) < 2 {
-		log.Fatal("Usage: goaccesslog <nginx-logfile-name>...")
+		fmt.Println("Usage: goaccesslog [add <nginx-logfile-name>...] | [clear] | [analyse] | [view]")
+		os.Exit(-1)
 	}
 	db, err := connectDatabase()
 	if err != nil {
 		log.Fatal(err)
 	}
 	defer db.Close()
-	insertStmt, err := db.Prepare("INSERT INTO accesslog (remote_addr,msec,time_local,request_method,request_uri,request_protocol,request_length,request_time,status,bytes_sent,user_agent,hash) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)")
+	switch os.Args[1] {
+	case "add":
+		add(db, os.Args[2:])
+	case "clear":
+		clear(db)
+	case "analyse":
+		analyse(db)
+	case "view":
+		viewBlockedIps(db)
+	}
+}
+
+func analyse(db *sql.DB) {
+	_, err := db.Exec("delete from blockedips")
+	if err != nil {
+		log.Fatal(err)
+	}
+	findSuspiciousRequests(db)
+}
+
+func clear(db *sql.DB) {
+	_, err := db.Exec("delete from accesslog")
+	if err != nil {
+		log.Fatal(err)
+	}
+	_, err = db.Exec("delete from blockedips")
+	if err != nil {
+		log.Fatal(err)
+	}
+}
+
+func add(db *sql.DB, fileNames []string) {
+	insertStmt, err := db.Prepare("INSERT INTO accesslog (remote_addr,time_local,request_method,request_uri,request_protocol,request_length,request_time,status,bytes_sent,user_agent,hash) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)")
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -49,19 +81,15 @@ func main() {
 		log.Fatal(err)
 	}
 	defer hashStmt.Close()
-	for idx := 1; idx < len(os.Args); idx++ {
-		err = insertAccessLogFile(insertStmt, hashStmt, os.Args[idx])
+	for _, fileName := range fileNames {
+		err = insertAccessLogFile(insertStmt, hashStmt, fileName)
 		if err != nil {
 			log.Fatal(err)
 		}
 	}
-	findSuspiciousRequests(db)
-	writeBlockedIps(db)
 }
 
-func writeBlockedIps(db *sql.DB) {
-	fmt.Println("Block IP addresses")
-	fmt.Println("------------------")
+func viewBlockedIps(db *sql.DB) {
 	rows, err := db.Query(
 		"select ip from blockedips order by ip asc")
 	if err != nil {
@@ -78,24 +106,24 @@ func writeBlockedIps(db *sql.DB) {
 }
 
 func findSuspiciousRequests(db *sql.DB) {
-	// find requests from IP addresses that failed and used unexpected request methods or took more than 500ms
+	// find requests from IP addresses that failed and used unexpected request methods or took more than 5000ms
 	rows, err := db.Query(
-		"select remote_addr,request_method,request_uri,request_time,status " +
-			"from accesslog where status >= 400 and (request_method not in ('GET','POST','PUT') or request_time > 500) and " +
+		"select remote_addr,request_method,request_uri,request_protocol,request_time,status " +
+			"from accesslog where status >= 400 and (request_method not in ('GET','POST','PUT','OPTIONS','PRI','HEAD','DELETE','CONNECT','TRACE','PATCH') or request_time > 5000) and " +
 			"remote_addr not in (select ip from blockedips)")
 	if err != nil {
 		log.Fatal(err)
 	}
 	blockips := make(map[string]bool)
 	for rows.Next() {
-		var remote_addr, request_method, request_uri string
+		var remote_addr, request_method, request_uri, request_protocol string
 		var request_time, status int
-		err = rows.Scan(&remote_addr, &request_method, &request_uri, &request_time, &status)
+		err = rows.Scan(&remote_addr, &request_method, &request_uri, &request_protocol, &request_time, &status)
 		if err != nil {
 			log.Fatal(err)
 		}
-		if !isValidUri(request_uri) {
-			fmt.Println("Block IP", remote_addr, request_method, request_uri, request_time, status)
+		if !blockips[remote_addr] && !isValidUri(request_uri) {
+			fmt.Println("Block IP", remote_addr, request_method, request_uri, request_protocol, request_time, status)
 			blockips[remote_addr] = true
 		}
 	}
@@ -136,8 +164,11 @@ func findSuspiciousRequests(db *sql.DB) {
 }
 
 func isValidUri(uri string) bool {
-	patterns := []string{"api", "arkanoid", "backgammon", "chess", "contacts", "diary", "documents", "index", "makeadate", "notes", "pwdman", "password", "skat", "slideshow", "tetris", "usermgmt", "view", "webpack"}
 	test := strings.ToLower(uri)
+	if test == "/" {
+		return true
+	}
+	patterns := []string{"api", "arkanoid", "backgammon", "chess", "contacts", "diary", "documents", "index", "makeadate", "notes", "pwdman", "password", "skat", "slideshow", "tetris", "usermgmt", "view", "webpack"}
 	for _, p := range patterns {
 		if strings.Contains(test, p) {
 			return true
@@ -198,8 +229,7 @@ func connectDatabase() (*sql.DB, error) {
 	}
 	query := `create table if not exists accesslog (
 			remote_addr varchar(32),
-			msec bigint,
-			time_local varchar(100),
+			time_local timestamptz,
 			request_method varchar(32),
 			request_uri varchar,
 			request_protocol varchar(32),
@@ -238,9 +268,7 @@ func insertLogLine(insertStmt, hashStmt *sql.Stmt, logLine LogLine, hash string)
 	defer rows.Close()
 	skipped := true
 	if !rows.Next() {
-		msec := logLine.msec
-		time_local := logLine.time_local.Format(time.RFC3339)
-		_, err = insertStmt.Exec(logLine.remote_addr, msec, time_local, logLine.request_method, logLine.request_uri, logLine.request_protocol, logLine.request_length, logLine.request_time, logLine.status, logLine.bytes_sent, logLine.user_agent, hash)
+		_, err = insertStmt.Exec(logLine.remote_addr, logLine.time_local, logLine.request_method, logLine.request_uri, logLine.request_protocol, logLine.request_length, logLine.request_time, logLine.status, logLine.bytes_sent, logLine.user_agent, hash)
 		if err != nil {
 			return false, err
 		}
@@ -253,18 +281,19 @@ func parseLogLine(line string) (LogLine, bool) {
 	logLine := LogLine{}
 	logLine.remote_addr, line = parseIpAddress(line)
 	if len(logLine.remote_addr) > 0 {
-		logLine.time_local, line = parseDate(line)
-		logLine.msec, line = parseMsec(line)
+		_, line = parseDate(line)
+		msec, line := parseMsec(line)
+		logLine.time_local = time.UnixMilli(msec)
 		logLine.request_uri, line = parseRequest(line)
 		idx := strings.Index(logLine.request_uri, " ")
 		if idx > 0 && idx < 32 {
 			logLine.request_method = logLine.request_uri[0:idx]
 			logLine.request_uri = logLine.request_uri[idx+1:]
-		}
-		idx = strings.Index(logLine.request_uri, " ")
-		if idx > len(logLine.request_uri)-32 {
-			logLine.request_protocol = logLine.request_uri[idx+1:]
-			logLine.request_uri = logLine.request_uri[0:idx]
+			idx = strings.Index(logLine.request_uri, " ")
+			if idx > 0 {
+				logLine.request_protocol = logLine.request_uri[idx+1:]
+				logLine.request_uri = logLine.request_uri[0:idx]
+			}
 		}
 		logLine.request_length, line = parseInt(line)
 		logLine.status, line = parseInt(line)
@@ -306,24 +335,26 @@ func parseEnv(line string) (string, string) {
 	return extractString(line, '"', '"')
 }
 
-func parseMsec(line string) (int, string) {
+func parseMsec(line string) (int64, string) {
 	sec, r1 := parseInt(line)
 	// skip .
 	msec, r2 := parseInt(r1[1:])
-	return sec*1000 + msec, r2
+	return int64(sec)*1000 + int64(msec), r2
 }
 
 func parseInt(line string) (int, string) {
 	var sb strings.Builder
-	for idx, c := range line {
+	var idx int
+	var c rune
+	for idx, c = range line {
 		if unicode.IsDigit(c) {
 			sb.WriteRune(c)
 		} else if sb.Len() > 0 {
-			num, _ := strconv.Atoi(sb.String())
-			return num, line[idx:]
+			break
 		}
 	}
-	return 0, ""
+	num, _ := strconv.Atoi(sb.String())
+	return num, line[idx:]
 }
 
 func parseDuration(line string) (int, string) {
@@ -333,15 +364,17 @@ func parseDuration(line string) (int, string) {
 
 func parseFloat(line string) (float64, string) {
 	var sb strings.Builder
-	for idx, c := range line {
+	var idx int
+	var c rune
+	for idx, c = range line {
 		if c == '.' || unicode.IsDigit(c) {
 			sb.WriteRune(c)
 		} else if sb.Len() > 0 {
-			num, _ := strconv.ParseFloat(sb.String(), 64)
-			return num, line[idx:]
+			break
 		}
 	}
-	return 0.0, ""
+	num, _ := strconv.ParseFloat(sb.String(), 64)
+	return num, line[idx:]
 }
 
 func extractString(line string, bracketStart, bracketEnd rune) (string, string) {
