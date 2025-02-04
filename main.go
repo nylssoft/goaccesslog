@@ -289,8 +289,8 @@ func parseLogLine(line string) (LogLine, bool) {
 		if idx > 0 && idx < 32 {
 			logLine.request_method = logLine.request_uri[0:idx]
 			logLine.request_uri = logLine.request_uri[idx+1:]
-			idx = strings.Index(logLine.request_uri, " ")
-			if idx > 0 {
+			idx = strings.LastIndex(logLine.request_uri, " ")
+			if idx > 0 && len(logLine.request_uri)-idx < 32 {
 				logLine.request_protocol = logLine.request_uri[idx+1:]
 				logLine.request_uri = logLine.request_uri[0:idx]
 			}
