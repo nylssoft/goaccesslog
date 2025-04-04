@@ -2,3 +2,5 @@
 *.log.*
 *.exe
 launch.json
+goaccesslog
+old/*
