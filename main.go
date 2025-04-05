@@ -4,8 +4,10 @@ import (
 	"crypto/md5"
 	"database/sql"
 	"encoding/hex"
+	"flag"
 	"log"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -14,6 +16,9 @@ import (
 	"github.com/fsnotify/fsnotify"
 	_ "github.com/mattn/go-sqlite3"
 )
+
+var flagLog = flag.String("log", "/var/log/nginx/access.log", "nginx log file")
+var flagDatabase = flag.String("database", "./goaccesslog.db", "database file")
 
 type LogLine struct {
 	remote_addr      string
@@ -29,14 +34,18 @@ type LogLine struct {
 }
 
 func main() {
+	flag.Parse()
+	log.Printf("Copy nginx log file entries into sqlite database file '%s'.\n", *flagDatabase)
+	log.Println("Note: nginx log format is expected to be")
+	log.Println("   log_format noreferer '$remote_addr - $remote_user [$time_local] $msec \"$request\" $request_length $status $body_bytes_sent $request_time \"$http_user_agent\"';")
 	ticker := time.NewTicker(60 * time.Second)
 	watcher, err := fsnotify.NewWatcher()
 	if err != nil {
 		log.Fatal(err)
 	}
 	defer watcher.Close()
-	logDir := "/var/log/nginx"
-	logFile := logDir + "/access.log"
+	logFile := *flagLog
+	logDir := filepath.Dir(logFile)
 	go func() {
 		update := false
 		var lastTimeLocal time.Time
@@ -45,7 +54,7 @@ func main() {
 			case event := <-watcher.Events:
 				if !update && event.Has(fsnotify.Write) && event.Name == logFile {
 					update = true
-					log.Printf("INFO: Detected modified log file '%s'. Update database on next schedule.\n", logFile)
+					log.Printf("Detected modified log file '%s'. Update database on next schedule.\n", logFile)
 				}
 			case <-ticker.C:
 				if update {
@@ -64,7 +73,7 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	log.Printf("INFO: Waiting for changes in log file '%s'.\n", logFile)
+	log.Printf("Watching for changes in log file '%s'.\n", logFile)
 	<-make(chan struct{})
 }
 
@@ -92,7 +101,7 @@ func updateDatabase(fileName string, lastTimeLocal time.Time) (time.Time, error)
 }
 
 func prepareDatabase() (*sql.DB, error) {
-	db, err := sql.Open("sqlite3", "./accesslog.db")
+	db, err := sql.Open("sqlite3", *flagDatabase)
 	if err == nil {
 		stmt := `CREATE TABLE IF NOT EXISTS accesslog (
 			remote_addr TEXT,
@@ -119,7 +128,7 @@ func prepareDatabase() (*sql.DB, error) {
 }
 
 func processLogFile(insertStmt, hashStmt *sql.Stmt, fileName string, lastTimeLocal time.Time) (time.Time, error) {
-	log.Printf("INFO: Process log entries in log file '%s'. Last processed log entry: %s.\n", fileName, lastTimeLocal)
+	log.Printf("Process log entries in log file '%s'. Last processed log entry: %s.\n", fileName, lastTimeLocal)
 	bytes, err := os.ReadFile(fileName)
 	if err != nil {
 		return lastTimeLocal, err
@@ -148,7 +157,7 @@ func processLogFile(insertStmt, hashStmt *sql.Stmt, fileName string, lastTimeLoc
 		}
 	}
 	if insertCnt > 0 || skipCnt > 0 || errCnt > 0 {
-		log.Printf("INFO: Inserted %d log lines. Skipped %d log lines. Errors occurred in %d log lines.\n", insertCnt, skipCnt, errCnt)
+		log.Printf("Inserted %d log lines. Skipped %d log lines. Errors occurred in %d log lines.\n", insertCnt, skipCnt, errCnt)
 	}
 	return lastTimeLocal, nil
 }
