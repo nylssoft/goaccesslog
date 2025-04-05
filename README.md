@@ -11,5 +11,5 @@ The program is intended to be used on linux servers.
 ## How to build
 
 - Install the required go version (see go.mod).
-- Set CFG_ENBALED = 1 and install gcc (required to build sqlite).
+- Set CGO_ENBALED = 1 and install gcc (required to build sqlite).
 - go build
