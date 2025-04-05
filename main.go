@@ -20,6 +20,10 @@ import (
 var flagLog = flag.String("log", "/var/log/nginx/access.log", "nginx log file")
 var flagDatabase = flag.String("database", "./goaccesslog.db", "database file")
 
+const SIZE_1K = 1024
+const SIZE_1M = SIZE_1K * SIZE_1K
+const SIZE_1G = SIZE_1M * SIZE_1K
+
 type LogLine struct {
 	remote_addr      string
 	time_local       time.Time
@@ -101,6 +105,10 @@ func updateDatabase(fileName string, lastTimeLocal time.Time) (time.Time, error)
 }
 
 func prepareDatabase() (*sql.DB, error) {
+	fileInfo, err := os.Stat(*flagDatabase)
+	if err == nil && fileInfo.Size() > SIZE_1G {
+		log.Fatal("FATAL: Database file is too large.")
+	}
 	db, err := sql.Open("sqlite3", *flagDatabase)
 	if err == nil {
 		stmt := `CREATE TABLE IF NOT EXISTS accesslog (
