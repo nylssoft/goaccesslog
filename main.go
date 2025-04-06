@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/hex"
 	"flag"
+	"fmt"
 	"log"
 	"os"
 	"path/filepath"
@@ -19,6 +20,7 @@ import (
 
 var flagLog = flag.String("log", "/var/log/nginx/access.log", "nginx log file")
 var flagDatabase = flag.String("database", "./goaccesslog.db", "database file")
+var flagVerbose = flag.Bool("verbose", false, "verbose logging")
 
 const SIZE_1K = 1024
 const SIZE_1M = SIZE_1K * SIZE_1K
@@ -39,13 +41,13 @@ type LogLine struct {
 
 func main() {
 	flag.Parse()
-	log.Printf("Copy nginx log file entries into sqlite database file '%s'.\n", *flagDatabase)
-	log.Println("Note: nginx log format is expected to be")
-	log.Println("   log_format noreferer '$remote_addr - $remote_user [$time_local] $msec \"$request\" $request_length $status $body_bytes_sent $request_time \"$http_user_agent\"';")
+	fmt.Printf("Copy nginx log file entries from '%s' into sqlite database file '%s'.\n", *flagLog, *flagDatabase)
+	fmt.Println("Note: nginx log format is expected to be")
+	fmt.Println("   log_format noreferer '$remote_addr - $remote_user [$time_local] $msec \"$request\" $request_length $status $body_bytes_sent $request_time \"$http_user_agent\"';")
 	ticker := time.NewTicker(60 * time.Second)
 	watcher, err := fsnotify.NewWatcher()
 	if err != nil {
-		log.Fatal(err)
+		log.Fatal("Failed to create file watcher.", err)
 	}
 	defer watcher.Close()
 	logFile := *flagLog
@@ -58,26 +60,27 @@ func main() {
 			case event := <-watcher.Events:
 				if !update && event.Has(fsnotify.Write) && event.Name == logFile {
 					update = true
-					log.Printf("Detected modified log file '%s'. Update database on next schedule.\n", logFile)
+					if *flagVerbose {
+						fmt.Println("Detected modified log file. Update database on next schedule.")
+					}
 				}
 			case <-ticker.C:
 				if update {
 					update = false
 					lastTimeLocal, err = updateDatabase(logFile, lastTimeLocal)
 					if err != nil {
-						log.Printf("ERROR: Failed to update database: %s.\n", err.Error())
+						fmt.Println("ERROR: Failed to update database.", err)
 					}
 				}
 			case err := <-watcher.Errors:
-				log.Printf("ERROR: Failed to watch directory '%s'. %s\n", logDir, err.Error())
+				fmt.Println("ERROR: Failed to watch directory.", err)
 			}
 		}
 	}()
 	err = watcher.Add(logDir)
 	if err != nil {
-		log.Fatal(err)
+		log.Fatal("Failed to add directory to file watcher.", err)
 	}
-	log.Printf("Watching for changes in log file '%s'.\n", logFile)
 	<-make(chan struct{})
 }
 
@@ -107,7 +110,7 @@ func updateDatabase(fileName string, lastTimeLocal time.Time) (time.Time, error)
 func prepareDatabase() (*sql.DB, error) {
 	fileInfo, err := os.Stat(*flagDatabase)
 	if err == nil && fileInfo.Size() > SIZE_1G {
-		log.Fatal("FATAL: Database file is too large.")
+		log.Fatal("Database file is too large.")
 	}
 	db, err := sql.Open("sqlite3", *flagDatabase)
 	if err == nil {
@@ -136,7 +139,9 @@ func prepareDatabase() (*sql.DB, error) {
 }
 
 func processLogFile(insertStmt, hashStmt *sql.Stmt, fileName string, lastTimeLocal time.Time) (time.Time, error) {
-	log.Printf("Process log entries in log file '%s'. Last processed log entry: %s.\n", fileName, lastTimeLocal)
+	if *flagVerbose {
+		fmt.Printf("Process log entries in log file '%s'. Last processed log entry: %s.\n", fileName, lastTimeLocal)
+	}
 	bytes, err := os.ReadFile(fileName)
 	if err != nil {
 		return lastTimeLocal, err
@@ -149,12 +154,13 @@ func processLogFile(insertStmt, hashStmt *sql.Stmt, fileName string, lastTimeLoc
 	for _, line := range lines {
 		logLine, err := parseLogLine(line)
 		if err != nil {
-			log.Printf("ERROR: Failed to process log line: '%s'. %s\n", line, err.Error())
+			fmt.Printf("ERROR: Failed to parse log line '%s': %s\n", line, err.Error())
 			continue
 		}
 		if logLine.time_local.Compare(lastTimeLocal) >= 0 {
 			skipped, err := insertLogLine(insertStmt, hashStmt, logLine, hashLine(line))
 			if err != nil {
+				fmt.Printf("ERROR: Failed to insert log line '%s': %s\n", line, err.Error())
 				errCnt++
 			} else if skipped {
 				skipCnt++
@@ -164,8 +170,8 @@ func processLogFile(insertStmt, hashStmt *sql.Stmt, fileName string, lastTimeLoc
 			lastTimeLocal = logLine.time_local
 		}
 	}
-	if insertCnt > 0 || skipCnt > 0 || errCnt > 0 {
-		log.Printf("Inserted %d log lines. Skipped %d log lines. Errors occurred in %d log lines.\n", insertCnt, skipCnt, errCnt)
+	if *flagVerbose && (insertCnt > 0 || skipCnt > 0 || errCnt > 0) {
+		fmt.Printf("Inserted %d log lines. Skipped %d log lines. Errors occurred in %d log lines.\n", insertCnt, skipCnt, errCnt)
 	}
 	return lastTimeLocal, nil
 }
