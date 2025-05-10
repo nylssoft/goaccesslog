@@ -8,9 +8,11 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"os/signal"
 	"path/filepath"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
 	"unicode"
 
@@ -52,6 +54,8 @@ func main() {
 	defer watcher.Close()
 	logFile := *flagLog
 	logDir := filepath.Dir(logFile)
+	stop := make(chan os.Signal, 1)
+	signal.Notify(stop, os.Interrupt, syscall.SIGTERM)
 	go func() {
 		update := false
 		var lastTimeLocal time.Time
@@ -81,7 +85,8 @@ func main() {
 	if err != nil {
 		log.Fatal("Failed to add directory to file watcher.", err)
 	}
-	<-make(chan struct{})
+	sig := <-stop
+	log.Printf("Received shutdown signal: %v", sig)
 }
 
 func updateDatabase(fileName string, lastTimeLocal time.Time) (time.Time, error) {
@@ -157,7 +162,7 @@ func processLogFile(insertStmt, hashStmt *sql.Stmt, fileName string, lastTimeLoc
 			fmt.Printf("ERROR: Failed to parse log line '%s': %s\n", line, err.Error())
 			continue
 		}
-		if logLine.time_local.Compare(lastTimeLocal) >= 0 {
+		if logLine.time_local.Compare(lastTimeLocal) >= 0 && logLine.status != 301 && logLine.status != 302 {
 			skipped, err := insertLogLine(insertStmt, hashStmt, logLine, hashLine(line))
 			if err != nil {
 				fmt.Printf("ERROR: Failed to insert log line '%s': %s\n", line, err.Error())
