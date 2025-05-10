@@ -15,13 +15,13 @@ The program is intended to be used on linux servers.
 - go build
 - Example setup for Windows WSL see below
 
-### Setup on Windows using WSL
+## Setup on Windows using WSL
 
-#### wsl
+### wsl
 - wsl --update
 - wsl --install -d Ubuntu-24.04 --name ubuntu-dev
 
-#### ubuntu update & upgrade
+### ubuntu update & upgrade
 - cd
 - sudo apt update
 - sudo apt upgrade
@@ -41,8 +41,7 @@ Note: no other process should listen on port 80
     access_log /var/log/nginx/access.log noreferer;
 - sudo nginx -t
 - sudo nginx -s reload
-- hostname -I
-- curl **ip-address**
+- curl localhost
 - sudo cat /var/log/nginx/access.log
 
 ### install go
@@ -70,15 +69,15 @@ Note: no other process should listen on port 80
 Start new bash
 
 - cd
-- mkdir sqlite
 - curl https://www.sqlite.org/2025/sqlite-autoconf-3490200.tar.gz >sqlite.tar.gz
 - gunzip sqlite.tar.gz
 - tar xf sqlite.tar
+- rm sqlite.tar
 - cd sqlite-autoconf-3490200/
 - ./configure
 - make
 
 ### test view access log entries
-- curl **ip-address**
-- sudo ./sqlite3 ../../goaccesslog/goaccesslog.db "select * from accesslog;"
-
+- curl localhost
+- wait 1 minute
+- sudo ./sqlite3 ../goaccesslog/goaccesslog.db "select * from accesslog;"
