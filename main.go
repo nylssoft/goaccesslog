@@ -54,13 +54,19 @@ func main() {
 	defer watcher.Close()
 	logFile := *flagLog
 	logDir := filepath.Dir(logFile)
-	stop := make(chan os.Signal, 1)
-	signal.Notify(stop, os.Interrupt, syscall.SIGTERM)
+	shutdown := make(chan bool, 1)
 	go func() {
+		stop := make(chan os.Signal, 1)
+		signal.Notify(stop, os.Interrupt, syscall.SIGTERM)
 		update := false
 		var lastTimeLocal time.Time
+	loop:
 		for {
 			select {
+			case sig := <-stop:
+				fmt.Printf("Shutdown signal %v received\n", sig)
+				shutdown <- true
+				break loop
 			case event := <-watcher.Events:
 				if !update && event.Has(fsnotify.Write) && event.Name == logFile {
 					update = true
@@ -85,8 +91,7 @@ func main() {
 	if err != nil {
 		log.Fatal("Failed to add directory to file watcher.", err)
 	}
-	sig := <-stop
-	log.Printf("Received shutdown signal: %v", sig)
+	<-shutdown
 }
 
 func updateDatabase(fileName string, lastTimeLocal time.Time) (time.Time, error) {
