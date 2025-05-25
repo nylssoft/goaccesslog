@@ -18,6 +18,7 @@ import (
 
 	"github.com/fsnotify/fsnotify"
 	_ "github.com/mattn/go-sqlite3"
+	"github.com/nylssoft/goaccesslog/internal/ufw"
 )
 
 var flagLog = flag.String("log", "/var/log/nginx/access.log", "nginx log file")
@@ -55,6 +56,9 @@ func main() {
 	logFile := *flagLog
 	logDir := filepath.Dir(logFile)
 	shutdown := make(chan bool, 1)
+	locks := ufw.NewLocks()
+	// remove all previously locked IP addresses if the process did not terminate appropriately
+	locks.RemoveAll()
 	go func() {
 		stop := make(chan os.Signal, 1)
 		signal.Notify(stop, os.Interrupt, syscall.SIGTERM)
@@ -77,10 +81,11 @@ func main() {
 			case <-ticker.C:
 				if update {
 					update = false
-					lastTimeLocal, err = updateDatabase(logFile, lastTimeLocal)
+					lastTimeLocal, err = updateDatabase(locks, logFile, lastTimeLocal)
 					if err != nil {
 						fmt.Println("ERROR: Failed to update database.", err)
 					}
+					locks.RemoveAfter(time.Hour * 1)
 				}
 			case err := <-watcher.Errors:
 				fmt.Println("ERROR: Failed to watch directory.", err)
@@ -92,9 +97,10 @@ func main() {
 		log.Fatal("Failed to add directory to file watcher.", err)
 	}
 	<-shutdown
+	locks.RemoveAll()
 }
 
-func updateDatabase(fileName string, lastTimeLocal time.Time) (time.Time, error) {
+func updateDatabase(locks *ufw.Locks, fileName string, lastTimeLocal time.Time) (time.Time, error) {
 	db, err := prepareDatabase()
 	if err != nil {
 		return lastTimeLocal, err
@@ -110,7 +116,7 @@ func updateDatabase(fileName string, lastTimeLocal time.Time) (time.Time, error)
 		return lastTimeLocal, err
 	}
 	defer hashStmt.Close()
-	lastTimeLocal, err = processLogFile(insertStmt, hashStmt, fileName, lastTimeLocal)
+	lastTimeLocal, err = processLogFile(locks, insertStmt, hashStmt, fileName, lastTimeLocal)
 	if err != nil {
 		return lastTimeLocal, err
 	}
@@ -148,7 +154,7 @@ func prepareDatabase() (*sql.DB, error) {
 	return db, err
 }
 
-func processLogFile(insertStmt, hashStmt *sql.Stmt, fileName string, lastTimeLocal time.Time) (time.Time, error) {
+func processLogFile(locks *ufw.Locks, insertStmt, hashStmt *sql.Stmt, fileName string, lastTimeLocal time.Time) (time.Time, error) {
 	if *flagVerbose {
 		fmt.Printf("Process log entries in log file '%s'. Last processed log entry: %s.\n", fileName, lastTimeLocal)
 	}
@@ -176,6 +182,9 @@ func processLogFile(insertStmt, hashStmt *sql.Stmt, fileName string, lastTimeLoc
 				skipCnt++
 			} else {
 				insertCnt++
+				if mustLock(logLine) {
+					locks.Add(logLine.remote_addr)
+				}
 			}
 			lastTimeLocal = logLine.time_local
 		}
@@ -184,6 +193,28 @@ func processLogFile(insertStmt, hashStmt *sql.Stmt, fileName string, lastTimeLoc
 		fmt.Printf("Inserted %d log lines. Skipped %d log lines. Errors occurred in %d log lines.\n", insertCnt, skipCnt, errCnt)
 	}
 	return lastTimeLocal, nil
+}
+
+func mustLock(logLine LogLine) bool {
+	// nginx response status, most commonly used to deny malicious or malformed requests
+	if logLine.status == 444 && !isValidUri(logLine.request_uri) {
+		fmt.Println("*** Suspecious request ***", logLine.request_protocol, logLine.request_uri)
+		return true
+	}
+	// TODO since last check get all failed IPs and number of failures per IP. If greater than n lock IP.
+	return false
+}
+
+func isValidUri(uri string) bool {
+	// TODO should be configurable based on regular expressions, specific for www.stockfleth.eu for now
+	patterns := []string{"api", "arkanoid", "backgammon", "chess", "contacts", "diary", "documents", "index", "makeadate", "notes", "pwdman", "password", "skat", "slideshow", "tetris", "usermgmt", "view"}
+	test := strings.ToLower(uri)
+	for _, p := range patterns {
+		if strings.Contains(test, p) {
+			return true
+		}
+	}
+	return false
 }
 
 func hashLine(line string) string {

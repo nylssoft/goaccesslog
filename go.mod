@@ -1,4 +1,4 @@
-module nylssoft/goaccesslog
+module github.com/nylssoft/goaccesslog
 
 go 1.24.2
 
