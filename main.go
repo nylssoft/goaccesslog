@@ -182,8 +182,8 @@ func processLogFile(locks *ufw.Locks, insertStmt, hashStmt *sql.Stmt, fileName s
 				skipCnt++
 			} else {
 				insertCnt++
-				if mustLock(logLine) {
-					locks.Add(logLine.remote_addr)
+				if mustLock(logLine) && locks.Add(logLine.remote_addr) {
+					fmt.Println("   Suspicious request:", logLine.request_protocol, logLine.request_uri, "at", logLine.time_local)
 				}
 			}
 			lastTimeLocal = logLine.time_local
@@ -197,8 +197,11 @@ func processLogFile(locks *ufw.Locks, insertStmt, hashStmt *sql.Stmt, fileName s
 
 func mustLock(logLine LogLine) bool {
 	// nginx response status, most commonly used to deny malicious or malformed requests
-	if logLine.status == 444 && !isValidUri(logLine.request_uri) {
-		fmt.Println("*** Suspecious request ***", logLine.request_protocol, logLine.request_uri)
+	ok := logLine.status != 444
+	if ok && logLine.status == 400 && strings.HasPrefix(logLine.request_uri, `\x`) {
+		ok = false
+	}
+	if !ok && !isValidUri(logLine.request_uri) {
 		return true
 	}
 	// TODO since last check get all failed IPs and number of failures per IP. If greater than n lock IP.

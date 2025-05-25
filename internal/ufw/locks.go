@@ -49,13 +49,17 @@ func (locks *Locks) RemoveAfter(duration time.Duration) {
 	}
 }
 
-func (locks *Locks) Add(ip string) {
-	res, err := exec.Command("ufw", "insert", "1", "reject", "from", ip, "to", "any", "comment", "goaccesslog").CombinedOutput()
-	if err == nil {
-		locks.ips[ip] = time.Now()
-		fmt.Println("Lock IP", ip)
+func (locks *Locks) Add(ip string) bool {
+	if _, contains := locks.ips[ip]; !contains {
+		res, err := exec.Command("ufw", "insert", "1", "reject", "from", ip, "to", "any", "comment", "goaccesslog").CombinedOutput()
+		if err == nil {
+			locks.ips[ip] = time.Now()
+			fmt.Println("Lock IP", ip)
+			return true
+		}
+		checkError("ufw insert 1 reject from "+ip+" to any comment goaccesslog", err, res)
 	}
-	checkError("ufw insert 1 reject from "+ip+" to any comment goaccesslog", err, res)
+	return false
 }
 
 func (locks *Locks) Remove(ip string) {
