@@ -64,7 +64,7 @@ func NewConfig(filename string) *Config {
 		MaxAge:   config.Logger.MaxAge,
 		Compress: true})
 	log.SetFlags(log.Ldate | log.Ltime | log.Lmicroseconds | log.LUTC)
-	log.Println("goaccesslog version 0.2.2")
+	log.Println("goaccesslog version 0.2.3")
 	log.Println("-------------------------")
 	log.Println("Copies nginx access log file entries into sqlite database and locks malicious IP addresses.")
 	log.Println("  config file     :", filename)

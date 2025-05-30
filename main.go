@@ -184,8 +184,8 @@ func processLogFile(locks *ufw.Locks, insertStmt, hashStmt *sql.Stmt, fileName s
 				skipCnt++
 			} else {
 				insertCnt++
-				if !locks.IsLocked(logLine.remote_addr) && cfg.IsMaliciousRequest(logLine.remote_addr, logLine.request_uri, logLine.status) &&
-					locks.Lock(logLine.remote_addr) {
+				if !locks.IsLocked(logLine.remote_addr) && cfg.IsMaliciousRequest(logLine.remote_addr, logLine.request_uri, logLine.status) {
+					locks.Lock(logLine.remote_addr)
 				}
 			}
 			lastTimeLocal = logLine.time_local
