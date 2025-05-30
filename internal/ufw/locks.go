@@ -1,19 +1,26 @@
 package ufw
 
 import (
-	"fmt"
+	"log"
 	"os/exec"
 	"strings"
 	"time"
 )
 
+type Info struct {
+	locked   bool
+	from     time.Time
+	to       time.Time
+	occurred int
+}
+
 type Locks struct {
-	ips map[string]time.Time
+	ips map[string]Info
 }
 
 func NewLocks() *Locks {
 	var locks Locks
-	locks.ips = make(map[string]time.Time)
+	locks.ips = make(map[string]Info)
 	res, err := exec.Command("ufw", "status").CombinedOutput()
 	if err == nil {
 		lines := strings.SplitSeq(string(res), "\n")
@@ -24,7 +31,9 @@ func NewLocks() *Locks {
 				idx = strings.LastIndex(line, "REJECT")
 				if idx > 0 {
 					ip := strings.TrimSpace(line[idx+len("REJECT"):])
-					locks.ips[ip] = time.Now()
+					from := time.Now()
+					until := from.Add(time.Hour * 1)
+					locks.ips[ip] = Info{locked: true, from: from, to: until, occurred: 1}
 				}
 			}
 		}
@@ -33,46 +42,60 @@ func NewLocks() *Locks {
 	return &locks
 }
 
-func (locks *Locks) RemoveAll() {
-	for ip := range locks.ips {
-		locks.Remove(ip)
+func (locks *Locks) UnlockAll() {
+	for ip, info := range locks.ips {
+		if info.locked {
+			locks.Unlock(ip)
+		}
 	}
 }
 
-func (locks *Locks) RemoveAfter(duration time.Duration) {
+func (locks *Locks) UnlockIfExpired() {
 	now := time.Now()
-	for ip, t := range locks.ips {
-		dur := now.Sub(t)
-		if dur > duration {
-			locks.Remove(ip)
+	for ip, info := range locks.ips {
+		if info.locked && now.After(info.to) {
+			locks.Unlock(ip)
 		}
 	}
 }
 
-func (locks *Locks) Add(ip string) bool {
-	if _, contains := locks.ips[ip]; !contains {
-		res, err := exec.Command("ufw", "insert", "1", "reject", "from", ip, "to", "any", "comment", "goaccesslog").CombinedOutput()
-		if err == nil {
-			locks.ips[ip] = time.Now()
-			fmt.Println("Lock IP", ip)
-			return true
+func (locks *Locks) IsLocked(ip string) bool {
+	info := locks.ips[ip]
+	return info.locked
+}
+
+func (locks *Locks) Lock(ip string) bool {
+	info := locks.ips[ip]
+	res, err := exec.Command("ufw", "insert", "1", "reject", "from", ip, "to", "any", "comment", "goaccesslog").CombinedOutput()
+	if err == nil {
+		info.locked = true
+		info.from = time.Now()
+		info.to = info.from.Add(time.Hour * (1 << info.occurred))
+		info.occurred += 1
+		if info.occurred > 10 {
+			info.occurred = 10
 		}
-		checkError("ufw insert 1 reject from "+ip+" to any comment goaccesslog", err, res)
+		locks.ips[ip] = info
+		log.Println("Lock IP", ip, "until", info.to, ". Detected", info.occurred, "times.")
+		return true
 	}
+	checkError("ufw insert 1 reject from "+ip+" to any comment goaccesslog", err, res)
 	return false
 }
 
-func (locks *Locks) Remove(ip string) {
+func (locks *Locks) Unlock(ip string) {
 	res, err := exec.Command("ufw", "delete", "reject", "from", ip, "to", "any").CombinedOutput()
 	if err == nil {
-		delete(locks.ips, ip)
-		fmt.Println("Unlocked IP", ip)
+		info := locks.ips[ip]
+		info.locked = false
+		locks.ips[ip] = info
+		log.Println("Unlocked IP", ip)
 	}
 	checkError("ufw delete reject from "+ip+" to any", err, res)
 }
 
 func checkError(cmd string, err error, res []byte) {
 	if err != nil {
-		fmt.Println("ERROR:", cmd, err, string(res))
+		log.Println("ERROR:", cmd, err, string(res))
 	}
 }

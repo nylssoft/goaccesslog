@@ -18,12 +18,13 @@ import (
 
 	"github.com/fsnotify/fsnotify"
 	_ "github.com/mattn/go-sqlite3"
+	"github.com/nylssoft/goaccesslog/internal/config"
 	"github.com/nylssoft/goaccesslog/internal/ufw"
 )
 
-var flagLog = flag.String("log", "/var/log/nginx/access.log", "nginx log file")
-var flagDatabase = flag.String("database", "./goaccesslog.db", "database file")
-var flagVerbose = flag.Bool("verbose", false, "verbose logging")
+var flagConfig = flag.String("config", "", "config file")
+
+var cfg *config.Config
 
 const SIZE_1K = 1024
 const SIZE_1M = SIZE_1K * SIZE_1K
@@ -44,21 +45,22 @@ type LogLine struct {
 
 func main() {
 	flag.Parse()
-	fmt.Printf("Copy nginx log file entries from '%s' into sqlite database file '%s'.\n", *flagLog, *flagDatabase)
-	fmt.Println("Note: nginx log format is expected to be")
-	fmt.Println("   log_format noreferer '$remote_addr - $remote_user [$time_local] $msec \"$request\" $request_length $status $body_bytes_sent $request_time \"$http_user_agent\"';")
+	if len(*flagConfig) == 0 {
+		fmt.Println("Usage: goaccesslog -config <config-file>")
+		os.Exit(1)
+	}
+	cfg = config.NewConfig(*flagConfig)
 	ticker := time.NewTicker(60 * time.Second)
 	watcher, err := fsnotify.NewWatcher()
 	if err != nil {
 		log.Fatal("Failed to create file watcher.", err)
 	}
 	defer watcher.Close()
-	logFile := *flagLog
-	logDir := filepath.Dir(logFile)
+	logDir := filepath.Dir(cfg.Nginx.AccessLogFilename)
 	shutdown := make(chan bool, 1)
 	locks := ufw.NewLocks()
 	// remove all previously locked IP addresses if the process did not terminate appropriately
-	locks.RemoveAll()
+	locks.UnlockAll()
 	go func() {
 		stop := make(chan os.Signal, 1)
 		signal.Notify(stop, os.Interrupt, syscall.SIGTERM)
@@ -68,27 +70,27 @@ func main() {
 		for {
 			select {
 			case sig := <-stop:
-				fmt.Printf("Shutdown signal %v received\n", sig)
+				log.Printf("Shutdown signal %v received.\n", sig)
 				shutdown <- true
 				break loop
 			case event := <-watcher.Events:
-				if !update && event.Has(fsnotify.Write) && event.Name == logFile {
+				if !update && event.Has(fsnotify.Write) && event.Name == cfg.Nginx.AccessLogFilename {
 					update = true
-					if *flagVerbose {
-						fmt.Println("Detected modified log file. Update database on next schedule.")
+					if cfg.Logger.Verbose {
+						log.Println("Detected modified log file. Update database on next schedule.")
 					}
 				}
 			case <-ticker.C:
 				if update {
 					update = false
-					lastTimeLocal, err = updateDatabase(locks, logFile, lastTimeLocal)
+					lastTimeLocal, err = updateDatabase(locks, lastTimeLocal)
 					if err != nil {
-						fmt.Println("ERROR: Failed to update database.", err)
+						log.Println("ERROR: Failed to update database.", err)
 					}
-					locks.RemoveAfter(time.Hour * 1)
+					locks.UnlockIfExpired()
 				}
 			case err := <-watcher.Errors:
-				fmt.Println("ERROR: Failed to watch directory.", err)
+				log.Println("ERROR: Failed to watch directory.", err)
 			}
 		}
 	}()
@@ -97,10 +99,10 @@ func main() {
 		log.Fatal("Failed to add directory to file watcher.", err)
 	}
 	<-shutdown
-	locks.RemoveAll()
+	locks.UnlockAll()
 }
 
-func updateDatabase(locks *ufw.Locks, fileName string, lastTimeLocal time.Time) (time.Time, error) {
+func updateDatabase(locks *ufw.Locks, lastTimeLocal time.Time) (time.Time, error) {
 	db, err := prepareDatabase()
 	if err != nil {
 		return lastTimeLocal, err
@@ -116,7 +118,7 @@ func updateDatabase(locks *ufw.Locks, fileName string, lastTimeLocal time.Time) 
 		return lastTimeLocal, err
 	}
 	defer hashStmt.Close()
-	lastTimeLocal, err = processLogFile(locks, insertStmt, hashStmt, fileName, lastTimeLocal)
+	lastTimeLocal, err = processLogFile(locks, insertStmt, hashStmt, cfg.Nginx.AccessLogFilename, lastTimeLocal)
 	if err != nil {
 		return lastTimeLocal, err
 	}
@@ -124,11 +126,11 @@ func updateDatabase(locks *ufw.Locks, fileName string, lastTimeLocal time.Time) 
 }
 
 func prepareDatabase() (*sql.DB, error) {
-	fileInfo, err := os.Stat(*flagDatabase)
+	fileInfo, err := os.Stat(cfg.Database.Filename)
 	if err == nil && fileInfo.Size() > SIZE_1G {
 		log.Fatal("Database file is too large.")
 	}
-	db, err := sql.Open("sqlite3", *flagDatabase)
+	db, err := sql.Open("sqlite3", cfg.Database.Filename)
 	if err == nil {
 		stmt := `CREATE TABLE IF NOT EXISTS accesslog (
 			remote_addr TEXT,
@@ -155,8 +157,8 @@ func prepareDatabase() (*sql.DB, error) {
 }
 
 func processLogFile(locks *ufw.Locks, insertStmt, hashStmt *sql.Stmt, fileName string, lastTimeLocal time.Time) (time.Time, error) {
-	if *flagVerbose {
-		fmt.Printf("Process log entries in log file '%s'. Last processed log entry: %s.\n", fileName, lastTimeLocal)
+	if cfg.Logger.Verbose {
+		log.Printf("Process log entries in log file '%s'. Last processed log entry: %s.\n", fileName, lastTimeLocal)
 	}
 	bytes, err := os.ReadFile(fileName)
 	if err != nil {
@@ -170,54 +172,29 @@ func processLogFile(locks *ufw.Locks, insertStmt, hashStmt *sql.Stmt, fileName s
 	for _, line := range lines {
 		logLine, err := parseLogLine(line)
 		if err != nil {
-			fmt.Printf("ERROR: Failed to parse log line '%s': %s\n", line, err.Error())
+			log.Printf("ERROR: Failed to parse log line '%s': %s\n", line, err.Error())
 			continue
 		}
-		if logLine.time_local.Compare(lastTimeLocal) >= 0 && logLine.status != 301 && logLine.status != 302 {
+		if logLine.time_local.Compare(lastTimeLocal) >= 0 {
 			skipped, err := insertLogLine(insertStmt, hashStmt, logLine, hashLine(line))
 			if err != nil {
-				fmt.Printf("ERROR: Failed to insert log line '%s': %s\n", line, err.Error())
+				log.Printf("ERROR: Failed to insert log line '%s': %s\n", line, err.Error())
 				errCnt++
 			} else if skipped {
 				skipCnt++
 			} else {
 				insertCnt++
-				if mustLock(logLine) && locks.Add(logLine.remote_addr) {
-					fmt.Println("   Suspicious request:", logLine.request_protocol, logLine.request_uri, "at", logLine.time_local)
+				if !locks.IsLocked(logLine.remote_addr) && cfg.IsMaliciousRequest(logLine.remote_addr, logLine.request_uri, logLine.status) &&
+					locks.Lock(logLine.remote_addr) {
 				}
 			}
 			lastTimeLocal = logLine.time_local
 		}
 	}
-	if *flagVerbose && (insertCnt > 0 || skipCnt > 0 || errCnt > 0) {
-		fmt.Printf("Inserted %d log lines. Skipped %d log lines. Errors occurred in %d log lines.\n", insertCnt, skipCnt, errCnt)
+	if cfg.Logger.Verbose && (insertCnt > 0 || skipCnt > 0 || errCnt > 0) {
+		log.Printf("Inserted %d log lines. Skipped %d log lines. Errors occurred in %d log lines.\n", insertCnt, skipCnt, errCnt)
 	}
 	return lastTimeLocal, nil
-}
-
-func mustLock(logLine LogLine) bool {
-	// nginx response status, most commonly used to deny malicious or malformed requests
-	ok := logLine.status != 444
-	if ok && logLine.status == 400 && strings.HasPrefix(logLine.request_uri, `\x`) {
-		ok = false
-	}
-	if !ok && !isValidUri(logLine.request_uri) {
-		return true
-	}
-	// TODO since last check get all failed IPs and number of failures per IP. If greater than n lock IP.
-	return false
-}
-
-func isValidUri(uri string) bool {
-	// TODO should be configurable based on regular expressions, specific for www.stockfleth.eu for now
-	patterns := []string{"api", "arkanoid", "backgammon", "chess", "contacts", "diary", "documents", "index", "makeadate", "notes", "pwdman", "password", "skat", "slideshow", "tetris", "usermgmt", "view"}
-	test := strings.ToLower(uri)
-	for _, p := range patterns {
-		if strings.Contains(test, p) {
-			return true
-		}
-	}
-	return false
 }
 
 func hashLine(line string) string {

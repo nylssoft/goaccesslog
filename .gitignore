@@ -3,6 +3,4 @@
 *.exe
 launch.json
 goaccesslog
-goaccesslog.db
 *debug*
-old/*

@@ -1,0 +1,40 @@
+{
+    "Nginx": {
+        "AccessLogFilename": "/var/log/nginx/access.log"
+    },
+    "Database": {
+        "Filename": "/var/log/goaccesslog.db"
+    },
+    "Logger": {
+        "Filename": "/var/log/goaccesslog.log",
+        "MaxSize": 10,
+        "MaxAge": 7,
+        "Verbose": false
+    },
+    "Rules": {
+        "Good": [
+            {
+                "name": "ignoreips",
+                "condition": "starts-with( ip, '127.' )"
+            },
+            {
+                "name": "validuris",
+                "condition": "contains( uri, '/api/', '/images/', '/js/', '/css/', '/robots.txt', '/favicon.ico', '/sitemap.xml', '/.well-known/' )"
+            }
+        ],
+        "Bad": [
+            {
+                "name": "status444",
+                "condition": "eq( status, 444 )"
+            },
+            {
+                "name": "hexrequests",
+                "condition": "eq( status, 400 ) and contains( uri, '\\x' )"
+            },
+            {
+                "name": "scanrequests",
+                "condition": "ge( status, 400 ) and ends-with( uri, '.env', '.git' )"
+            }
+        ]
+    }
+}
