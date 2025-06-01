@@ -1,18 +1,18 @@
 {
-    "Nginx": {
-        "AccessLogFilename": "/var/log/nginx/access.log"
+    "nginx": {
+        "accessLogFilename": "/var/log/nginx/access.log"
     },
-    "Database": {
-        "Filename": "/var/log/goaccesslog.db"
+    "database": {
+        "filename": "/var/log/goaccesslog.db"
     },
-    "Logger": {
-        "Filename": "/var/log/goaccesslog.log",
-        "MaxSize": 10,
-        "MaxAge": 7,
-        "Verbose": false
+    "logger": {
+        "filename": "/var/log/goaccesslog.log",
+        "maxSize": 10,
+        "maxAge": 7,
+        "verbose": false
     },
-    "Rules": {
-        "Good": [
+    "rules": {
+        "good": [
             {
                 "name": "ignore-ips",
                 "condition": "starts-with( ip, '127.' )"
@@ -22,7 +22,7 @@
                 "condition": "contains( uri, '/api/', '/images/', '/js/', '/css/', '/robots.txt', '/favicon.ico', '/sitemap.xml', '/.well-known/' )"
             }
         ],
-        "Bad": [
+        "bad": [
             {
                 "name": "status-444",
                 "condition": "eq( status, 444 )"

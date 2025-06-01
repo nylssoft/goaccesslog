@@ -32,8 +32,8 @@ type Config struct {
 		Verbose  bool   `json:"verbose"`
 	} `json:"logger"`
 	Rules struct {
-		Good []ConfigRule `json:"Good"`
-		Bad  []ConfigRule `json:"Bad"`
+		Good []ConfigRule `json:"good"`
+		Bad  []ConfigRule `json:"bad"`
 	} `json:"rules"`
 }
 
