@@ -46,8 +46,6 @@ func NewConfig(filename string) (*Config, error) {
 	if err != nil {
 		return nil, err
 	}
-	config.Expressions = make(map[string][]Expression)
-	var expressions []Expression
 	fmt.Println("Copies nginx access log file entries into sqlite database and locks malicious IP addresses.")
 	fmt.Println("  config file          :", filename)
 	fmt.Println("  log file             :", config.Logger.Filename)
@@ -61,22 +59,7 @@ func NewConfig(filename string) (*Config, error) {
 		err = canReadFile(config.Nginx.AccessLogFilename, "nginx access log")
 	}
 	if err == nil {
-		for _, goodrule := range config.Rules.Good {
-			expressions, err = ParseCondition(goodrule.Condition)
-			if err != nil {
-				break
-			}
-			config.Expressions[goodrule.Name] = expressions
-		}
-	}
-	if err == nil {
-		for _, badrule := range config.Rules.Bad {
-			expressions, err = ParseCondition(badrule.Condition)
-			if err != nil {
-				break
-			}
-			config.Expressions[badrule.Name] = expressions
-		}
+		err = config.updateExpressions()
 	}
 	if err != nil {
 		return nil, err
@@ -134,6 +117,37 @@ func (cfg *Config) IsMaliciousRequest(ip string, uri string, status int) bool {
 
 // private
 
+func (config *Config) updateExpressions() error {
+	config.Expressions = make(map[string][]Expression)
+	for _, rules := range [][]ConfigRule{config.Rules.Good, config.Rules.Bad} {
+		for _, rule := range rules {
+			expressions, err := parseRule(rule)
+			if err != nil {
+				return err
+			}
+			if _, contains := config.Expressions[rule.Name]; contains {
+				return fmt.Errorf("rule name '%s' is not unique", rule.Name)
+			}
+			config.Expressions[rule.Name] = expressions
+		}
+	}
+	return nil
+}
+
+func parseRule(rule ConfigRule) ([]Expression, error) {
+	if len(rule.Name) == 0 {
+		return nil, errors.New("missing 'Name' in rule definition")
+	}
+	if len(rule.Condition) == 0 {
+		return nil, errors.New("missing 'Condition' in rule definition")
+	}
+	expressions, err := ParseCondition(rule.Condition)
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse rule '%s': %s", rule.Name, err.Error())
+	}
+	return expressions, err
+}
+
 func canReadFile(filename string, desc string) error {
 	return canOpenFile(filename, desc, true)
 }
@@ -144,7 +158,7 @@ func canWriteFile(filename string, desc string) error {
 
 func canOpenFile(filename string, desc string, readonly bool) error {
 	if len(filename) == 0 {
-		return errors.New("missing " + desc + " filename in config")
+		return fmt.Errorf("missing %s filename in config", desc)
 	}
 	var err error
 	var file *os.File

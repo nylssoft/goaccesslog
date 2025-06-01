@@ -26,8 +26,7 @@ func main() {
 	}
 	cfg, err := config.NewConfig(*flagConfig)
 	if err != nil {
-		fmt.Println("ERROR: ", err)
-		os.Exit(1)
+		log.Fatal(err)
 	}
 	ticker := time.NewTicker(60 * time.Second)
 	watcher, err := fsnotify.NewWatcher()

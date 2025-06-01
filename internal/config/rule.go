@@ -2,7 +2,9 @@ package config
 
 import (
 	"errors"
+	"fmt"
 	"log"
+	"slices"
 	"strconv"
 	"strings"
 	"unicode"
@@ -79,6 +81,8 @@ var propertyMap map[string]Property = map[string]Property{
 	"ip":     PROP_IP,
 }
 
+var invalidNumberOperators []Operator = []Operator{OPR_IN, OPR_STARTS, OPR_ENDS}
+
 func evaluateExpression(expr Expression, data map[Property]any) bool {
 	val := data[expr.prop]
 	for _, arg := range expr.values {
@@ -106,6 +110,14 @@ func evaluateStringExpressionValue(expr Expression, val string, arg string) bool
 		return val == arg
 	case OPR_NE:
 		return val != arg
+	case OPR_GE:
+		return val >= arg
+	case OPR_GT:
+		return val > arg
+	case OPR_LE:
+		return val <= arg
+	case OPR_LT:
+		return val < arg
 	case OPR_IN:
 		return strings.Contains(val, arg)
 	case OPR_STARTS:
@@ -144,29 +156,30 @@ func parseExpr(str string, idx int) ([]Expression, error) {
 	var prop Property
 	var values []any
 	var ok bool
-	op, idx, ok = parseFunction(str, idx)
-	if !ok {
-		return ret, errors.New("cannot parse function " + str + " position" + strconv.Itoa(idx))
+	var err error
+	op, idx, err = parseFunction(str, idx)
+	if err != nil {
+		return ret, fmt.Errorf("cannot parse function in '%s' at position %d: %s", str, idx, err.Error())
 	}
 	idx, ok = matchRune(str, idx, '(')
 	if !ok {
-		return ret, errors.New("missing ( " + str + " position" + strconv.Itoa(idx))
+		return ret, fmt.Errorf("missing '(' in '%s' at position %d", str, idx)
 	}
-	prop, idx, ok = parseProperty(str, idx)
-	if !ok {
-		return ret, errors.New("cannot parse property " + str + " position" + strconv.Itoa(idx))
+	prop, idx, err = parseProperty(op, str, idx)
+	if err != nil {
+		return ret, fmt.Errorf("cannot parse property in '%s' at position %d: %s", str, idx, err.Error())
 	}
 	idx, ok = matchRune(str, idx, ',')
 	if !ok {
-		return ret, errors.New("cannot match , " + str + " position" + strconv.Itoa(idx))
+		return ret, fmt.Errorf("missing ',' in '%s' at position %d", str, idx)
 	}
-	values, idx, ok = parseValues(str, idx)
-	if !ok {
-		return ret, errors.New("cannot parse values " + str + " position" + strconv.Itoa(idx))
+	values, idx, err = parseValues(str, idx, isIntType(prop))
+	if err != nil {
+		return ret, fmt.Errorf("cannot parse values in '%s' at position %d: %s", str, idx, err.Error())
 	}
 	idx, ok = matchRune(str, idx, ')')
 	if !ok {
-		return ret, errors.New("cannot match ) " + str + " position" + strconv.Itoa(idx))
+		return ret, fmt.Errorf("missing ')' in '%s' at position %d", str, idx)
 	}
 	expression := Expression{op, prop, values}
 	ret = append(ret, expression)
@@ -182,7 +195,11 @@ func parseExpr(str string, idx int) ([]Expression, error) {
 	return ret, nil
 }
 
-func parseFunction(str string, idx int) (Operator, int, bool) {
+func isIntType(prop Property) bool {
+	return prop == PROP_STATUS
+}
+
+func parseFunction(str string, idx int) (Operator, int, error) {
 	var symbol string
 	var ok bool
 	var op Operator
@@ -190,10 +207,13 @@ func parseFunction(str string, idx int) (Operator, int, bool) {
 	if ok {
 		op, ok = operatorMap[symbol]
 	}
-	return op, idx, ok
+	if !ok {
+		return op, idx, fmt.Errorf("unknown function '%s'", symbol)
+	}
+	return op, idx, nil
 }
 
-func parseProperty(str string, idx int) (Property, int, bool) {
+func parseProperty(op Operator, str string, idx int) (Property, int, error) {
 	var symbol string
 	var ok bool
 	var prop Property
@@ -201,40 +221,49 @@ func parseProperty(str string, idx int) (Property, int, bool) {
 	if ok {
 		prop, ok = propertyMap[symbol]
 	}
-	return prop, idx, ok
+	if !ok {
+		return prop, idx, fmt.Errorf("unknown property '%s'", symbol)
+	}
+	if isIntType(prop) && slices.Contains(invalidNumberOperators, op) {
+		return prop, idx, fmt.Errorf("invalid function for property '%s'", symbol)
+	}
+	return prop, idx, nil
 }
 
-func parseValues(str string, idx int) ([]any, int, bool) {
+func parseValues(str string, idx int, isIntType bool) ([]any, int, error) {
 	var ret []any
 	var ok bool = true
-	var isString bool
 	var hasNext bool
 	var val any
-	val, idx, isString = matchString(str, idx)
-	if !isString {
+	if isIntType {
 		var valstr string
 		var err error
-		valstr, idx, ok = matchDigit(str, idx)
-		if ok {
-			val, err = strconv.Atoi(valstr)
-			if err != nil {
-				log.Println("WARN: not a number", valstr)
-				ok = false
-			}
+		valstr, idx, ok = matchNumber(str, idx)
+		if !ok {
+			return ret, idx, errors.New("value is not a number")
+		}
+		val, err = strconv.Atoi(valstr)
+		if err != nil {
+			return ret, idx, errors.New("value is not a number")
+		}
+	} else {
+		val, idx, ok = matchString(str, idx)
+		if !ok {
+			return ret, idx, errors.New("value is not a string")
 		}
 	}
-	if ok {
-		ret = append(ret, val)
-		idx, hasNext = matchRune(str, idx, ',')
-		if hasNext {
-			var values []any
-			values, idx, ok = parseValues(str, idx)
-			if ok {
-				ret = append(ret, values...)
-			}
+	ret = append(ret, val)
+	idx, hasNext = matchRune(str, idx, ',')
+	if hasNext {
+		var values []any
+		var err error
+		values, idx, err = parseValues(str, idx, isIntType)
+		if err != nil {
+			return ret, idx, err
 		}
+		ret = append(ret, values...)
 	}
-	return ret, idx, ok
+	return ret, idx, nil
 }
 
 func getRune(str string, idx int) (rune, bool) {
@@ -282,12 +311,18 @@ func matchRune(str string, idx int, expected rune) (int, bool) {
 	return idx, ok
 }
 
-func matchDigit(str string, idx int) (string, int, bool) {
+func matchNumber(str string, idx int) (string, int, bool) {
 	var ret strings.Builder
 	r, idx, ok := nextNonSpaceRune(str, idx)
-	for ok && unicode.IsDigit(r) {
+	ok = ok && unicode.IsDigit(r)
+	if ok {
 		ret.WriteRune(r)
-		r, idx, ok = nextRune(str, idx)
+		var hasNext bool
+		r, idx, hasNext = nextRune(str, idx)
+		for hasNext && unicode.IsDigit(r) {
+			ret.WriteRune(r)
+			r, idx, hasNext = nextRune(str, idx)
+		}
 	}
 	return ret.String(), idx, ok
 }
@@ -313,12 +348,14 @@ func matchSymbol(str string, idx int) (string, int, bool) {
 	var ok bool
 	var r rune
 	r, idx, ok = nextNonSpaceRune(str, idx)
-	if ok && unicode.IsLetter(r) {
+	ok = ok && unicode.IsLetter(r)
+	if ok {
 		ret.WriteRune(r)
-		r, idx, ok = nextRune(str, idx)
-		for ok && (unicode.IsLetter(r) || unicode.IsDigit(r) || r == '-' || r == '_') {
+		var hasNext bool
+		r, idx, hasNext = nextRune(str, idx)
+		for hasNext && (unicode.IsLetter(r) || unicode.IsDigit(r) || r == '-' || r == '_') {
 			ret.WriteRune(r)
-			r, idx, ok = nextRune(str, idx)
+			r, idx, hasNext = nextRune(str, idx)
 		}
 	}
 	return ret.String(), idx, ok
