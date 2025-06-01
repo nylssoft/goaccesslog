@@ -14,25 +14,25 @@
     "Rules": {
         "Good": [
             {
-                "name": "ignoreips",
+                "name": "ignore-ips",
                 "condition": "starts-with( ip, '127.' )"
             },
             {
-                "name": "validuris",
+                "name": "valid-uris",
                 "condition": "contains( uri, '/api/', '/images/', '/js/', '/css/', '/robots.txt', '/favicon.ico', '/sitemap.xml', '/.well-known/' )"
             }
         ],
         "Bad": [
             {
-                "name": "status444",
+                "name": "status-444",
                 "condition": "eq( status, 444 )"
             },
             {
-                "name": "hexrequests",
+                "name": "hex-requests",
                 "condition": "eq( status, 400 ) and contains( uri, '\\x' )"
             },
             {
-                "name": "scanrequests",
+                "name": "scan-requests",
                 "condition": "ge( status, 400 ) and ends-with( uri, '.env', '.git' )"
             }
         ]

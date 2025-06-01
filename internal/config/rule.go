@@ -1,6 +1,7 @@
 package config
 
 import (
+	"errors"
 	"log"
 	"strconv"
 	"strings"
@@ -13,6 +14,8 @@ import (
 // DIGIT := 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9
 // OPERATOR := eq | ne | gt | ge | lt | le | contains | starts-with | ends-with
 // PROPERTY := status | uri | ip
+
+// public
 
 type Operator int
 
@@ -42,9 +45,7 @@ const (
 	PROP_IP
 )
 
-// --- public
-
-func ParseCondition(str string) []Expression {
+func ParseCondition(str string) ([]Expression, error) {
 	return parseExpr(str, 0)
 }
 
@@ -58,7 +59,7 @@ func EvaluateExpressions(expressions []Expression, data map[Property]any) bool {
 	return true
 }
 
-// --- private
+// private
 
 var operatorMap map[string]Operator = map[string]Operator{
 	"eq":          OPR_EQ,
@@ -137,7 +138,7 @@ func evaluateIntExpressionValue(expr Expression, val int, arg int) bool {
 	return false
 }
 
-func parseExpr(str string, idx int) []Expression {
+func parseExpr(str string, idx int) ([]Expression, error) {
 	var ret []Expression
 	var op Operator
 	var prop Property
@@ -145,48 +146,40 @@ func parseExpr(str string, idx int) []Expression {
 	var ok bool
 	op, idx, ok = parseFunction(str, idx)
 	if !ok {
-		log.Println("WARN: Cannot parse function", str, "position", idx)
+		return ret, errors.New("cannot parse function " + str + " position" + strconv.Itoa(idx))
 	}
-	if ok {
-		idx, ok = matchRune(str, idx, '(')
-		if !ok {
-			log.Println("WARN: Missing (", str, "position", idx)
+	idx, ok = matchRune(str, idx, '(')
+	if !ok {
+		return ret, errors.New("missing ( " + str + " position" + strconv.Itoa(idx))
+	}
+	prop, idx, ok = parseProperty(str, idx)
+	if !ok {
+		return ret, errors.New("cannot parse property " + str + " position" + strconv.Itoa(idx))
+	}
+	idx, ok = matchRune(str, idx, ',')
+	if !ok {
+		return ret, errors.New("cannot match , " + str + " position" + strconv.Itoa(idx))
+	}
+	values, idx, ok = parseValues(str, idx)
+	if !ok {
+		return ret, errors.New("cannot parse values " + str + " position" + strconv.Itoa(idx))
+	}
+	idx, ok = matchRune(str, idx, ')')
+	if !ok {
+		return ret, errors.New("cannot match ) " + str + " position" + strconv.Itoa(idx))
+	}
+	expression := Expression{op, prop, values}
+	ret = append(ret, expression)
+	var hasNext bool
+	idx, hasNext = matchTerimal(str, idx, "and")
+	if hasNext {
+		next, err := parseExpr(str, idx)
+		if err != nil {
+			return ret, err
 		}
+		ret = append(ret, next...)
 	}
-	if ok {
-		prop, idx, ok = parseProperty(str, idx)
-		if !ok {
-			log.Println("WARN: Cannot parse property", str, "position", idx)
-		}
-	}
-	if ok {
-		idx, ok = matchRune(str, idx, ',')
-		if !ok {
-			log.Println("WARN: Cannot match ,", str, "position", idx)
-		}
-	}
-	if ok {
-		values, idx, ok = parseValues(str, idx)
-		if !ok {
-			log.Println("WARN: Cannot parse values", str, "position", idx)
-		}
-	}
-	if ok {
-		idx, ok = matchRune(str, idx, ')')
-		if !ok {
-			log.Println("WARN: Cannot match )", str, "position", idx)
-		}
-	}
-	if ok {
-		expression := Expression{op, prop, values}
-		ret = append(ret, expression)
-		var hasNext bool
-		idx, hasNext = matchTerimal(str, idx, "and")
-		if hasNext {
-			ret = append(ret, parseExpr(str, idx)...)
-		}
-	}
-	return ret
+	return ret, nil
 }
 
 func parseFunction(str string, idx int) (Operator, int, bool) {

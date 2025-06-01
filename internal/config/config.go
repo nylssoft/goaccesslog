@@ -2,11 +2,15 @@ package config
 
 import (
 	"encoding/json"
+	"errors"
+	"fmt"
 	"log"
 	"os"
 
 	"gopkg.in/natefinch/lumberjack.v2"
 )
+
+// public
 
 type ConfigRule struct {
 	Name      string `json:"name"`
@@ -33,30 +37,49 @@ type Config struct {
 	} `json:"rules"`
 }
 
-func NewConfig(filename string) *Config {
+func NewConfig(filename string) (*Config, error) {
 	var config Config
 	data, err := os.ReadFile(filename)
 	if err == nil {
 		err = json.Unmarshal(data, &config)
 	}
 	if err != nil {
-		log.Printf("WARN: Failed to read config file '%s'. %s\n", filename, err.Error())
+		return nil, err
 	}
 	config.Expressions = make(map[string][]Expression)
-	for _, goodrule := range config.Rules.Good {
-		config.Expressions[goodrule.Name] = ParseCondition(goodrule.Condition)
+	var expressions []Expression
+	fmt.Println("Copies nginx access log file entries into sqlite database and locks malicious IP addresses.")
+	fmt.Println("  config file          :", filename)
+	fmt.Println("  log file             :", config.Logger.Filename)
+	fmt.Println("  nginx access log file:", config.Nginx.AccessLogFilename)
+	fmt.Println("  sqlite database file :", config.Database.Filename)
+	err = canWriteFile(config.Logger.Filename, "log")
+	if err == nil {
+		err = canWriteFile(config.Database.Filename, "database")
 	}
-	for _, badrule := range config.Rules.Bad {
-		config.Expressions[badrule.Name] = ParseCondition(badrule.Condition)
+	if err == nil {
+		err = canReadFile(config.Nginx.AccessLogFilename, "nginx access log")
 	}
-	if len(config.Nginx.AccessLogFilename) == 0 {
-		config.Nginx.AccessLogFilename = "/var/log/nginx/access.log"
+	if err == nil {
+		for _, goodrule := range config.Rules.Good {
+			expressions, err = ParseCondition(goodrule.Condition)
+			if err != nil {
+				break
+			}
+			config.Expressions[goodrule.Name] = expressions
+		}
 	}
-	if len(config.Database.Filename) == 0 {
-		config.Database.Filename = "/var/log/goaccesslog.db"
+	if err == nil {
+		for _, badrule := range config.Rules.Bad {
+			expressions, err = ParseCondition(badrule.Condition)
+			if err != nil {
+				break
+			}
+			config.Expressions[badrule.Name] = expressions
+		}
 	}
-	if len(config.Logger.Filename) == 0 {
-		config.Logger.Filename = "/var/log/goaccesslog.log"
+	if err != nil {
+		return nil, err
 	}
 	log.SetOutput(&lumberjack.Logger{
 		Filename: config.Logger.Filename,
@@ -64,12 +87,7 @@ func NewConfig(filename string) *Config {
 		MaxAge:   config.Logger.MaxAge,
 		Compress: true})
 	log.SetFlags(log.Ldate | log.Ltime | log.Lmicroseconds | log.LUTC)
-	log.Println("goaccesslog version 0.2.3")
-	log.Println("-------------------------")
-	log.Println("Copies nginx access log file entries into sqlite database and locks malicious IP addresses.")
-	log.Println("  config file     :", filename)
-	log.Println("  nginx access log:", config.Nginx.AccessLogFilename)
-	log.Println("  sqlite database :", config.Database.Filename)
+	log.Println("goaccesslog version 0.2.4")
 	log.Println()
 	log.Println("Note: nginx log format is expected to be")
 	log.Println("  log_format noreferer '$remote_addr - $remote_user [$time_local] $msec \"$request\" $request_length $status $body_bytes_sent $request_time \"$http_user_agent\"';")
@@ -83,8 +101,8 @@ func NewConfig(filename string) *Config {
 	for _, goodrule := range config.Rules.Good {
 		log.Printf("  %s: %s\n", goodrule.Name, goodrule.Condition)
 	}
-	log.Println("-------------------------")
-	return &config
+	log.Println()
+	return &config, nil
 }
 
 func (cfg *Config) IsMaliciousRequest(ip string, uri string, status int) bool {
@@ -112,4 +130,31 @@ func (cfg *Config) IsMaliciousRequest(ip string, uri string, status int) bool {
 		}
 	}
 	return isMalicious
+}
+
+// private
+
+func canReadFile(filename string, desc string) error {
+	return canOpenFile(filename, desc, true)
+}
+
+func canWriteFile(filename string, desc string) error {
+	return canOpenFile(filename, desc, false)
+}
+
+func canOpenFile(filename string, desc string, readonly bool) error {
+	if len(filename) == 0 {
+		return errors.New("missing " + desc + " filename in config")
+	}
+	var err error
+	var file *os.File
+	if readonly {
+		file, err = os.Open(filename)
+	} else {
+		file, err = os.OpenFile(filename, os.O_RDWR|os.O_CREATE, 0640)
+	}
+	if err == nil {
+		file.Close()
+	}
+	return err
 }
