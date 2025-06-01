@@ -1,4 +1,4 @@
-package logline
+package app
 
 import (
 	"crypto/md5"
@@ -11,7 +11,6 @@ import (
 
 	_ "github.com/mattn/go-sqlite3"
 	"github.com/nylssoft/goaccesslog/internal/config"
-	"github.com/nylssoft/goaccesslog/internal/ufw"
 )
 
 // public
@@ -20,23 +19,28 @@ type Analyzer struct {
 	Db         *sql.DB
 	InsertStmt *sql.Stmt
 	HashStmt   *sql.Stmt
+	// dependencies
+	Config *config.Config
+	Locks  *Locks
 }
 
 const SIZE_1K = 1024
 const SIZE_1M = SIZE_1K * SIZE_1K
 const SIZE_1G = SIZE_1M * SIZE_1K
 
-func NewAnalyzer() *Analyzer {
+func NewAnalyzer(cfg *config.Config, locks *Locks) *Analyzer {
 	var analyzer Analyzer
+	analyzer.Config = cfg
+	analyzer.Locks = locks
 	return &analyzer
 }
 
-func (analyzer *Analyzer) Analyze(cfg *config.Config, locks *ufw.Locks, lastTimeLocal time.Time) (time.Time, error) {
-	defer analyzer.close()
-	if cfg.Logger.Verbose {
-		log.Printf("Process log entries in log file '%s'. Last processed log entry: %s.\n", cfg.Nginx.AccessLogFilename, lastTimeLocal)
+func (analyzer *Analyzer) Analyze(lastTimeLocal time.Time) (time.Time, error) {
+	defer analyzer.closeDatabase()
+	if analyzer.Config.Logger.Verbose {
+		log.Printf("Process log entries in log file '%s'. Last processed log entry: %s.\n", analyzer.Config.Nginx.AccessLogFilename, lastTimeLocal)
 	}
-	bytes, err := os.ReadFile(cfg.Nginx.AccessLogFilename)
+	bytes, err := os.ReadFile(analyzer.Config.Nginx.AccessLogFilename)
 	if err != nil {
 		return lastTimeLocal, err
 	}
@@ -52,7 +56,7 @@ func (analyzer *Analyzer) Analyze(cfg *config.Config, locks *ufw.Locks, lastTime
 			continue
 		}
 		if logLine.TimeLocal.Compare(lastTimeLocal) >= 0 {
-			skipped, err := analyzer.insertLogLine(cfg, logLine, hashLine(line))
+			skipped, err := analyzer.insertLogLine(logLine, hashLine(line))
 			if err != nil {
 				log.Printf("ERROR: Failed to insert log line '%s': %s\n", line, err.Error())
 				errCnt++
@@ -60,24 +64,24 @@ func (analyzer *Analyzer) Analyze(cfg *config.Config, locks *ufw.Locks, lastTime
 				skipCnt++
 			} else {
 				insertCnt++
-				if !locks.IsLocked(logLine.RemoteAddr) && cfg.IsMaliciousRequest(logLine.RemoteAddr, logLine.RequestUri, logLine.Status) {
-					locks.Lock(logLine.RemoteAddr)
+				if !analyzer.Locks.IsLocked(logLine.RemoteAddr) && analyzer.Config.IsMaliciousRequest(logLine.RemoteAddr, logLine.RequestUri, logLine.Status) {
+					analyzer.Locks.Lock(logLine.RemoteAddr)
 				}
 			}
 			lastTimeLocal = logLine.TimeLocal
 		}
 	}
-	if cfg.Logger.Verbose && (insertCnt > 0 || skipCnt > 0 || errCnt > 0) {
+	if analyzer.Config.Logger.Verbose && (insertCnt > 0 || skipCnt > 0 || errCnt > 0) {
 		log.Printf("Inserted %d log lines. Skipped %d log lines. Errors occurred in %d log lines.\n", insertCnt, skipCnt, errCnt)
 	}
-	locks.UnlockIfExpired()
+	analyzer.Locks.UnlockIfExpired()
 	return lastTimeLocal, err
 }
 
 // private
 
-func (analyzer *Analyzer) insertLogLine(cfg *config.Config, logLine LogLine, hash string) (bool, error) {
-	analyzer.prepare(cfg)
+func (analyzer *Analyzer) insertLogLine(logLine LogLine, hash string) (bool, error) {
+	analyzer.initDatabase()
 	rows, err := analyzer.HashStmt.Query(hash)
 	if err != nil {
 		return false, err
@@ -94,16 +98,16 @@ func (analyzer *Analyzer) insertLogLine(cfg *config.Config, logLine LogLine, has
 	return skipped, nil
 }
 
-func (analyzer *Analyzer) prepare(cfg *config.Config) error {
+func (analyzer *Analyzer) initDatabase() error {
 	var err error
 	if analyzer.Db == nil {
 		var fileInfo os.FileInfo
-		fileInfo, err = os.Stat(cfg.Database.Filename)
+		fileInfo, err = os.Stat(analyzer.Config.Database.Filename)
 		if err == nil && fileInfo.Size() > SIZE_1G {
 			log.Fatal("Database file is too large.")
 		}
 		var db *sql.DB
-		db, err = sql.Open("sqlite3", cfg.Database.Filename)
+		db, err = sql.Open("sqlite3", analyzer.Config.Database.Filename)
 		if err == nil {
 			stmt := `CREATE TABLE IF NOT EXISTS accesslog (
 			remote_addr TEXT,
@@ -146,7 +150,7 @@ func (analyzer *Analyzer) prepare(cfg *config.Config) error {
 	return err
 }
 
-func (analyzer *Analyzer) close() {
+func (analyzer *Analyzer) closeDatabase() {
 	if analyzer.HashStmt != nil {
 		analyzer.HashStmt.Close()
 		analyzer.HashStmt = nil

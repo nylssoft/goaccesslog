@@ -11,9 +11,8 @@ import (
 	"time"
 
 	"github.com/fsnotify/fsnotify"
+	"github.com/nylssoft/goaccesslog/internal/app"
 	"github.com/nylssoft/goaccesslog/internal/config"
-	"github.com/nylssoft/goaccesslog/internal/logline"
-	"github.com/nylssoft/goaccesslog/internal/ufw"
 )
 
 var flagConfig = flag.String("config", "", "config file")
@@ -36,9 +35,9 @@ func main() {
 	defer watcher.Close()
 	logDir := filepath.Dir(cfg.Nginx.AccessLogFilename)
 	shutdown := make(chan bool, 1)
-	locks := ufw.NewLocks()
+	locks := app.NewLocks()
 	locks.UnlockAll() // remove all previously locked IP addresses if the process did not terminate appropriately
-	analyzer := logline.NewAnalyzer()
+	analyzer := app.NewAnalyzer(cfg, locks)
 	go func() {
 		stop := make(chan os.Signal, 1)
 		signal.Notify(stop, os.Interrupt, syscall.SIGTERM)
@@ -61,7 +60,7 @@ func main() {
 			case <-ticker.C:
 				if update {
 					update = false
-					lastTimeLocal, err = analyzer.Analyze(cfg, locks, lastTimeLocal)
+					lastTimeLocal, err = analyzer.Analyze(lastTimeLocal)
 					if err != nil {
 						log.Println("ERROR: Failed to analyze access log file.", err)
 					}

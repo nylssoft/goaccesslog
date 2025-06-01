@@ -1,4 +1,4 @@
-package logline
+package app
 
 import (
 	"strconv"
