@@ -136,10 +136,10 @@ func (config *Config) updateExpressions() error {
 
 func parseRule(rule ConfigRule) ([]Expression, error) {
 	if len(rule.Name) == 0 {
-		return nil, errors.New("missing 'Name' in rule definition")
+		return nil, errors.New("missing 'name' in rule definition")
 	}
 	if len(rule.Condition) == 0 {
-		return nil, errors.New("missing 'Condition' in rule definition")
+		return nil, errors.New("missing 'condition' in rule definition")
 	}
 	expressions, err := ParseCondition(rule.Condition)
 	if err != nil {
