@@ -12,7 +12,7 @@ import (
 
 	"github.com/fsnotify/fsnotify"
 	"github.com/nylssoft/goaccesslog/internal/config"
-	"github.com/nylssoft/goaccesslog/internal/database"
+	"github.com/nylssoft/goaccesslog/internal/logline"
 	"github.com/nylssoft/goaccesslog/internal/ufw"
 )
 
@@ -37,8 +37,8 @@ func main() {
 	logDir := filepath.Dir(cfg.Nginx.AccessLogFilename)
 	shutdown := make(chan bool, 1)
 	locks := ufw.NewLocks()
-	// remove all previously locked IP addresses if the process did not terminate appropriately
-	locks.UnlockAll()
+	locks.UnlockAll() // remove all previously locked IP addresses if the process did not terminate appropriately
+	analyzer := logline.NewAnalyzer()
 	go func() {
 		stop := make(chan os.Signal, 1)
 		signal.Notify(stop, os.Interrupt, syscall.SIGTERM)
@@ -55,17 +55,16 @@ func main() {
 				if !update && event.Has(fsnotify.Write) && event.Name == cfg.Nginx.AccessLogFilename {
 					update = true
 					if cfg.Logger.Verbose {
-						log.Println("Detected modified log file. Update database on next schedule.")
+						log.Println("Detected modified access log file. Analyze new access log entries on next schedule.")
 					}
 				}
 			case <-ticker.C:
 				if update {
 					update = false
-					lastTimeLocal, err = database.Update(cfg, locks, lastTimeLocal)
+					lastTimeLocal, err = analyzer.Analyze(cfg, locks, lastTimeLocal)
 					if err != nil {
-						log.Println("ERROR: Failed to update database.", err)
+						log.Println("ERROR: Failed to analyze access log file.", err)
 					}
-					locks.UnlockIfExpired()
 				}
 			case err := <-watcher.Errors:
 				log.Println("ERROR: Failed to watch directory.", err)
