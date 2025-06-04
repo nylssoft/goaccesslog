@@ -1,33 +1,33 @@
-package app
+package ufw
 
 import (
+	"fmt"
 	"log"
 	"os/exec"
 	"strings"
 	"time"
 )
 
-// public
-
-type Info struct {
+type info struct {
 	locked   bool
 	from     time.Time
 	to       time.Time
 	occurred int
 }
 
-type Locks struct {
-	ips map[string]Info
+type ufw_impl struct {
+	comment string
+	ips     map[string]info
 }
 
-func NewLocks() *Locks {
-	var locks Locks
-	locks.ips = make(map[string]Info)
+func (ufw *ufw_impl) Init() {
+	ufw.ips = make(map[string]info)
+	match := fmt.Sprintf("# %s", ufw.comment)
 	res, err := exec.Command("ufw", "status").CombinedOutput()
 	if err == nil {
 		lines := strings.SplitSeq(string(res), "\n")
 		for line := range lines {
-			idx := strings.LastIndex(line, "# goaccesslog")
+			idx := strings.LastIndex(line, match)
 			if idx > 0 {
 				line = line[0:idx]
 				idx = strings.LastIndex(line, "REJECT")
@@ -35,38 +35,37 @@ func NewLocks() *Locks {
 					ip := strings.TrimSpace(line[idx+len("REJECT"):])
 					from := time.Now()
 					until := from.Add(time.Hour * 1)
-					locks.ips[ip] = Info{locked: true, from: from, to: until, occurred: 1}
+					ufw.ips[ip] = info{locked: true, from: from, to: until, occurred: 1}
 				}
 			}
 		}
 	}
 	checkError("ufw status", err, res)
-	return &locks
 }
 
-func (locks *Locks) UnlockAll() {
-	for ip, info := range locks.ips {
+func (ufw *ufw_impl) ReleaseAll() {
+	for ip, info := range ufw.ips {
 		if info.locked {
-			locks.Unlock(ip)
+			ufw.Release(ip)
 		}
 	}
 }
 
-func (locks *Locks) UnlockIfExpired() {
+func (ufw *ufw_impl) ReleaseIfExpired() {
 	now := time.Now()
-	for ip, info := range locks.ips {
+	for ip, info := range ufw.ips {
 		if info.locked && now.After(info.to) {
-			locks.Unlock(ip)
+			ufw.Release(ip)
 		}
 	}
 }
 
-func (locks *Locks) IsLocked(ip string) bool {
+func (locks *ufw_impl) IsRejected(ip string) bool {
 	info := locks.ips[ip]
 	return info.locked
 }
 
-func (locks *Locks) Lock(ip string) bool {
+func (locks *ufw_impl) Reject(ip string) bool {
 	info := locks.ips[ip]
 	res, err := exec.Command("ufw", "insert", "1", "reject", "from", ip, "to", "any", "comment", "goaccesslog").CombinedOutput()
 	if err == nil {
@@ -85,7 +84,7 @@ func (locks *Locks) Lock(ip string) bool {
 	return false
 }
 
-func (locks *Locks) Unlock(ip string) {
+func (locks *ufw_impl) Release(ip string) {
 	res, err := exec.Command("ufw", "delete", "reject", "from", ip, "to", "any").CombinedOutput()
 	if err == nil {
 		info := locks.ips[ip]

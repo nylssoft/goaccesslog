@@ -11,8 +11,9 @@ import (
 	"time"
 
 	"github.com/fsnotify/fsnotify"
-	"github.com/nylssoft/goaccesslog/internal/app"
+	"github.com/nylssoft/goaccesslog/internal/analyzer"
 	"github.com/nylssoft/goaccesslog/internal/config"
+	"github.com/nylssoft/goaccesslog/internal/ufw"
 )
 
 var flagConfig = flag.String("config", "", "config file")
@@ -23,7 +24,8 @@ func main() {
 		fmt.Println("Usage: goaccesslog -config <config-file>")
 		os.Exit(1)
 	}
-	cfg, err := config.NewConfig(*flagConfig)
+	cfg := config.NewConfig()
+	err := cfg.Init(*flagConfig)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -33,11 +35,12 @@ func main() {
 		log.Fatal("Failed to create file watcher.", err)
 	}
 	defer watcher.Close()
-	logDir := filepath.Dir(cfg.Nginx.AccessLogFilename)
+	logDir := filepath.Dir(cfg.AccessLogFilename())
 	shutdown := make(chan bool, 1)
-	locks := app.NewLocks()
-	locks.UnlockAll() // remove all previously locked IP addresses if the process did not terminate appropriately
-	analyzer := app.NewAnalyzer(cfg, locks)
+	ufw := ufw.NewUfw("goaccesslog")
+	ufw.Init()
+	ufw.ReleaseAll() // remove all previously locked IP addresses if the process did not terminate appropriately
+	analyzer := analyzer.NewAnalyzer(cfg, ufw)
 	go func() {
 		stop := make(chan os.Signal, 1)
 		signal.Notify(stop, os.Interrupt, syscall.SIGTERM)
@@ -51,9 +54,9 @@ func main() {
 				shutdown <- true
 				break loop
 			case event := <-watcher.Events:
-				if !update && event.Has(fsnotify.Write) && event.Name == cfg.Nginx.AccessLogFilename {
+				if !update && event.Has(fsnotify.Write) && event.Name == cfg.AccessLogFilename() {
 					update = true
-					if cfg.Logger.Verbose {
+					if cfg.IsVerbose() {
 						log.Println("Detected modified access log file. Analyze new access log entries on next schedule.")
 					}
 				}
@@ -75,5 +78,5 @@ func main() {
 		log.Fatal("Failed to add directory to file watcher.", err)
 	}
 	<-shutdown
-	locks.UnlockAll()
+	ufw.ReleaseAll()
 }
