@@ -57,7 +57,8 @@ func (analyzer *analyzer_impl) Analyze(lastTimeLocal time.Time) (time.Time, erro
 				skipCnt++
 			} else {
 				insertCnt++
-				if !analyzer.ufw.IsRejected(logLine.RemoteAddr) && analyzer.config.IsMaliciousRequest(logLine.RemoteAddr, logLine.RequestUri, logLine.Status) {
+				if !analyzer.ufw.IsRejected(logLine.RemoteAddr) &&
+					analyzer.config.IsMaliciousRequest(logLine.RemoteAddr, logLine.RequestProtocol, logLine.RequestUri, logLine.Status) {
 					analyzer.ufw.Reject(logLine.RemoteAddr)
 				}
 			}

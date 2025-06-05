@@ -23,9 +23,10 @@ var operatorMap map[string]Operator = map[string]Operator{
 }
 
 var propertyMap map[string]Property = map[string]Property{
-	"status": PROP_STATUS,
-	"uri":    PROP_URI,
-	"ip":     PROP_IP,
+	"status":   PROP_STATUS,
+	"uri":      PROP_URI,
+	"ip":       PROP_IP,
+	"protocol": PROP_PROTOCOL,
 }
 
 var invalidNumberOperators []Operator = []Operator{OPR_IN, OPR_STARTS, OPR_ENDS}

@@ -98,11 +98,12 @@ func (cfg *config_impl) DatabaseFilename() string {
 	return cfg.Database.Filename
 }
 
-func (cfg *config_impl) IsMaliciousRequest(ip string, uri string, status int) bool {
+func (cfg *config_impl) IsMaliciousRequest(ip string, protocol string, uri string, status int) bool {
 	data := map[rule.Property]any{}
 	data[rule.PROP_IP] = ip
-	data[rule.PROP_STATUS] = status
+	data[rule.PROP_PROTOCOL] = protocol
 	data[rule.PROP_URI] = uri
+	data[rule.PROP_STATUS] = status
 	var isMalicious bool
 	// evaluate whether request is considered as malicious
 	for _, badrule := range cfg.Rules.Bad {

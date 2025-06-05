@@ -33,6 +33,7 @@ const (
 	PROP_STATUS = iota
 	PROP_URI
 	PROP_IP
+	PROP_PROTOCOL
 )
 
 func ParseCondition(str string) ([]Expression, error) {

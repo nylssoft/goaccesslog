@@ -95,8 +95,6 @@ func (locks *ufw_impl) Release(ip string) {
 	checkError("ufw delete reject from "+ip+" to any", err, res)
 }
 
-// private
-
 func checkError(cmd string, err error, res []byte) {
 	if err != nil {
 		log.Println("ERROR:", cmd, err, string(res))

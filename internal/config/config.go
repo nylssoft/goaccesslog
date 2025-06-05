@@ -5,7 +5,7 @@ type Config interface {
 	IsVerbose() bool
 	AccessLogFilename() string
 	DatabaseFilename() string
-	IsMaliciousRequest(ip string, uri string, status int) bool
+	IsMaliciousRequest(ip string, protocol string, uri string, status int) bool
 }
 
 func NewConfig() Config {
