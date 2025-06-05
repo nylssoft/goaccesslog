@@ -2,8 +2,12 @@
 
 ## Introduction
 
-Copies nginx access log file entries into a sqlite database.
-Currently only a fixed log format is supported.
+Copies nginx access log file entries into a sqlite database and optionally
+adds firewall rules to reject malicious HTTP requests.
+The rules used to detect malicious requests can be configured using a simple grammar, see [sample.json](configs/sample.json)
+and [rule.go](internal/rule/rule.go).
+
+Only a fixed nginx access log format is supported.
 Start the program to see the required log format.
 
 The program is intended to be used on linux servers.
@@ -62,7 +66,8 @@ Note: no other process should listen on port 80
 - export CGO_ENABLED=1
 - go build
 - code .
-- sudo ./goaccesslog -verbose
+- sudo ./goaccesslog -config configs/sample.json
+- sudo cat /var/log/goaccesslog.log
 
 ### build sqlite
 

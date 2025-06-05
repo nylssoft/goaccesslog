@@ -34,6 +34,10 @@
             {
                 "name": "scan-requests",
                 "condition": "ge( status, 400 ) and ends-with( uri, '.env', '.git' )"
+            },
+            {
+                "name": "empty-protocol",
+                "condition": "ge( status, 400 ) and eq( protocol, '' )"
             }
         ]
     }

@@ -32,8 +32,8 @@ var propertyMap map[string]Property = map[string]Property{
 var invalidNumberOperators []Operator = []Operator{OPR_IN, OPR_STARTS, OPR_ENDS}
 
 func evaluateExpression(expr Expression, data map[Property]any) bool {
-	val := data[expr.prop]
-	for _, arg := range expr.values {
+	val := data[expr.Prop]
+	for _, arg := range expr.Values {
 		// or conjunction for argument list
 		if evaluateExpressionValue(expr, val, arg) {
 			return true
@@ -53,7 +53,7 @@ func evaluateExpressionValue(expr Expression, val any, arg any) bool {
 }
 
 func evaluateStringExpressionValue(expr Expression, val string, arg string) bool {
-	switch expr.op {
+	switch expr.Op {
 	case OPR_EQ:
 		return val == arg
 	case OPR_NE:
@@ -79,7 +79,7 @@ func evaluateStringExpressionValue(expr Expression, val string, arg string) bool
 }
 
 func evaluateIntExpressionValue(expr Expression, val int, arg int) bool {
-	switch expr.op {
+	switch expr.Op {
 	case OPR_EQ:
 		return val == arg
 	case OPR_NE:

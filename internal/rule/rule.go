@@ -5,16 +5,16 @@ package rule
 // STRING := "'" CHAR "'"
 // DIGIT := 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9
 // OPERATOR := eq | ne | gt | ge | lt | le | contains | starts-with | ends-with
-// PROPERTY := status | uri | ip
+// PROPERTY := status | protocol | uri | ip
 
 type Operator int
 
 type Property int
 
 type Expression struct {
-	op     Operator
-	prop   Property
-	values []any
+	Op     Operator
+	Prop   Property
+	Values []any
 }
 
 const (
