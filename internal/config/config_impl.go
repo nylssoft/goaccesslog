@@ -68,7 +68,7 @@ func (cfg *config_impl) Init(filename string) error {
 		MaxAge:   cfg.Logger.MaxAge,
 		Compress: true})
 	log.SetFlags(log.Ldate | log.Ltime | log.Lmicroseconds | log.LUTC)
-	log.Println("goaccesslog version 0.2.5")
+	log.Println("goaccesslog version 0.2.6")
 	log.Println()
 	log.Println("Note: nginx log format is expected to be")
 	log.Println("  log_format noreferer '$remote_addr - $remote_user [$time_local] $msec \"$request\" $request_length $status $body_bytes_sent $request_time \"$http_user_agent\"';")

@@ -1,5 +1,11 @@
 package ufw
 
+import (
+	"time"
+
+	"github.com/nylssoft/goaccesslog/internal/executer"
+)
+
 // Provides an interface to the universal firewall used to add or remove REJECT firewall rules
 // for IP addresses.
 //
@@ -31,9 +37,12 @@ type Ufw interface {
 }
 
 // Creates a new firewall object with the specified comment for REJECT firewall rules.
-func NewUfw(comment string) Ufw {
+func NewUfw(executer executer.Executer, comment string, delay time.Duration, maxFailures int) Ufw {
 	var ufw ufw_impl
+	ufw.executer = executer
 	ufw.comment = comment
+	ufw.delay = delay
+	ufw.maxFailures = maxFailures
 	ufw.ips = make(map[string]info)
 	return &ufw
 }

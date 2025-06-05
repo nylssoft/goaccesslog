@@ -13,6 +13,7 @@ import (
 	"github.com/fsnotify/fsnotify"
 	"github.com/nylssoft/goaccesslog/internal/analyzer"
 	"github.com/nylssoft/goaccesslog/internal/config"
+	"github.com/nylssoft/goaccesslog/internal/executer"
 	"github.com/nylssoft/goaccesslog/internal/ufw"
 )
 
@@ -37,7 +38,8 @@ func main() {
 	defer watcher.Close()
 	logDir := filepath.Dir(cfg.AccessLogFilename())
 	shutdown := make(chan bool, 1)
-	ufw := ufw.NewUfw("goaccesslog")
+	executer := executer.NewExecuter()
+	ufw := ufw.NewUfw(executer, "goaccesslog", time.Hour, 10)
 	ufw.Init()
 	ufw.ReleaseAll() // remove all previously locked IP addresses if the process did not terminate appropriately
 	analyzer := analyzer.NewAnalyzer(cfg, ufw)
