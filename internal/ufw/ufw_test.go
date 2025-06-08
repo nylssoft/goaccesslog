@@ -4,6 +4,8 @@ import (
 	"errors"
 	"testing"
 	"time"
+
+	"github.com/stretchr/testify/assert"
 )
 
 func TestUfw(t *testing.T) {
@@ -21,33 +23,33 @@ OpenSSH                    DENY        Anywhere`,
 	}
 
 	ufw := NewUfw(&e, "unittest", time.Hour, 10)
-	assertNotNil(t, ufw)
+	assert.NotNil(t, ufw)
 
 	ufw.Init()
 
 	// 3 IPs rejected, 1 IP skipped
 	rejected := ufw.IsRejected("178.128.20.144")
-	assertTrue(t, rejected)
+	assert.True(t, rejected)
 	rejected = ufw.IsRejected("45.82.78.254")
-	assertTrue(t, rejected)
+	assert.True(t, rejected)
 	rejected = ufw.IsRejected("176.65.148.236")
-	assertTrue(t, rejected)
+	assert.True(t, rejected)
 	rejected = ufw.IsRejected("204.76.203.219")
-	assertFalse(t, rejected)
+	assert.False(t, rejected)
 
 	// release a single IP
 	ufw.Release("178.128.20.144")
 	rejected = ufw.IsRejected("178.128.20.144")
-	assertFalse(t, rejected)
+	assert.False(t, rejected)
 
 	// release all IPs
 	ufw.ReleaseAll()
 	rejected = ufw.IsRejected("178.128.20.144")
-	assertFalse(t, rejected)
+	assert.False(t, rejected)
 	rejected = ufw.IsRejected("45.82.78.254")
-	assertFalse(t, rejected)
+	assert.False(t, rejected)
 	rejected = ufw.IsRejected("176.65.148.236")
-	assertFalse(t, rejected)
+	assert.False(t, rejected)
 
 	ufw = NewUfw(&e, "unittest", time.Second, 3)
 	ufw.Init()
@@ -55,29 +57,29 @@ OpenSSH                    DENY        Anywhere`,
 	// all IPs expired, therefore released
 	ufw.ReleaseIfExpired()
 	rejected = ufw.IsRejected("178.128.20.144")
-	assertFalse(t, rejected)
+	assert.False(t, rejected)
 	rejected = ufw.IsRejected("45.82.78.254")
-	assertFalse(t, rejected)
+	assert.False(t, rejected)
 	rejected = ufw.IsRejected("176.65.148.236")
-	assertFalse(t, rejected)
+	assert.False(t, rejected)
 
 	// reject IP four times, totally delayed for 1 << 3 seconds == 8 seconds
 	ufw.Reject("1.1.1.1")
 	ufw.Reject("1.1.1.1")
 	ufw.Reject("1.1.1.1")
 	ufw.Reject("1.1.1.1")
-	assertTrue(t, ufw.IsRejected("1.1.1.1"))
+	assert.True(t, ufw.IsRejected("1.1.1.1"))
 	time.Sleep(time.Second * 3)
 	ufw.ReleaseIfExpired()
-	assertTrue(t, ufw.IsRejected("1.1.1.1"))
+	assert.True(t, ufw.IsRejected("1.1.1.1"))
 	time.Sleep(time.Second * 6)
 	ufw.ReleaseIfExpired()
-	assertFalse(t, ufw.IsRejected("1.1.1.1"))
+	assert.False(t, ufw.IsRejected("1.1.1.1"))
 
 	// error handling
 	e.err = errors.New("simulate error")
 	ufw.Init()
-	assertFalse(t, ufw.Reject("1.1.1.1"))
+	assert.False(t, ufw.Reject("1.1.1.1"))
 }
 
 type mockExecutor struct {
@@ -87,22 +89,4 @@ type mockExecutor struct {
 
 func (e *mockExecutor) Exec(cmdName string, args ...string) ([]byte, error) {
 	return []byte(e.ret), e.err
-}
-
-func assertNotNil(t *testing.T, value any) {
-	if value == nil {
-		t.Errorf("Expected value must not be nil but is '%v'.", value)
-	}
-}
-
-func assertTrue(t *testing.T, value bool) {
-	if !value {
-		t.Errorf("Expected value is not true.")
-	}
-}
-
-func assertFalse(t *testing.T, value bool) {
-	if value {
-		t.Errorf("Expected value is not false.")
-	}
 }
