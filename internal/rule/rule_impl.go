@@ -3,7 +3,6 @@ package rule
 import (
 	"errors"
 	"fmt"
-	"log"
 	"slices"
 	"strconv"
 	"strings"
@@ -53,49 +52,47 @@ func evaluateExpressionValue(expr Expression, val any, arg any) bool {
 }
 
 func evaluateStringExpressionValue(expr Expression, val string, arg string) bool {
+	ret := false
 	switch expr.Op {
 	case OPR_EQ:
-		return val == arg
+		ret = val == arg
 	case OPR_NE:
-		return val != arg
+		ret = val != arg
 	case OPR_GE:
-		return val >= arg
+		ret = val >= arg
 	case OPR_GT:
-		return val > arg
+		ret = val > arg
 	case OPR_LE:
-		return val <= arg
+		ret = val <= arg
 	case OPR_LT:
-		return val < arg
+		ret = val < arg
 	case OPR_IN:
-		return strings.Contains(val, arg)
+		ret = strings.Contains(val, arg)
 	case OPR_STARTS:
-		return strings.HasPrefix(val, arg)
+		ret = strings.HasPrefix(val, arg)
 	case OPR_ENDS:
-		return strings.HasSuffix(val, arg)
-	default:
-		log.Println("WARN: invalid operator used in condition")
+		ret = strings.HasSuffix(val, arg)
 	}
-	return false
+	return ret
 }
 
 func evaluateIntExpressionValue(expr Expression, val int, arg int) bool {
+	ret := false
 	switch expr.Op {
 	case OPR_EQ:
-		return val == arg
+		ret = val == arg
 	case OPR_NE:
-		return val != arg
+		ret = val != arg
 	case OPR_GE:
-		return val >= arg
+		ret = val >= arg
 	case OPR_GT:
-		return val > arg
+		ret = val > arg
 	case OPR_LE:
-		return val <= arg
+		ret = val <= arg
 	case OPR_LT:
-		return val < arg
-	default:
-		log.Println("WARN: invalid operator used in condition")
+		ret = val < arg
 	}
-	return false
+	return ret
 }
 
 func parseExpr(str string, idx int) ([]Expression, error) {
@@ -107,38 +104,39 @@ func parseExpr(str string, idx int) ([]Expression, error) {
 	var err error
 	op, idx, err = parseFunction(str, idx)
 	if err != nil {
-		return ret, fmt.Errorf("cannot parse function in '%s' at position %d: %s", str, idx, err.Error())
+		return nil, fmt.Errorf("cannot parse function in '%s' at position %d: %s", str, idx, err.Error())
 	}
 	idx, ok = matchRune(str, idx, '(')
 	if !ok {
-		return ret, fmt.Errorf("missing '(' in '%s' at position %d", str, idx)
+		return nil, fmt.Errorf("missing '(' in '%s' at position %d", str, idx)
 	}
 	prop, idx, err = parseProperty(op, str, idx)
 	if err != nil {
-		return ret, fmt.Errorf("cannot parse property in '%s' at position %d: %s", str, idx, err.Error())
+		return nil, fmt.Errorf("cannot parse property in '%s' at position %d: %s", str, idx, err.Error())
 	}
 	idx, ok = matchRune(str, idx, ',')
 	if !ok {
-		return ret, fmt.Errorf("missing ',' in '%s' at position %d", str, idx)
+		return nil, fmt.Errorf("missing ',' in '%s' at position %d", str, idx)
 	}
 	values, idx, err = parseValues(str, idx, isIntType(prop))
 	if err != nil {
-		return ret, fmt.Errorf("cannot parse values in '%s' at position %d: %s", str, idx, err.Error())
+		return nil, fmt.Errorf("cannot parse values in '%s' at position %d: %s", str, idx, err.Error())
 	}
 	idx, ok = matchRune(str, idx, ')')
 	if !ok {
-		return ret, fmt.Errorf("missing ')' in '%s' at position %d", str, idx)
+		return nil, fmt.Errorf("missing ')' in '%s' at position %d", str, idx)
 	}
 	expression := Expression{op, prop, values}
 	ret = append(ret, expression)
-	var hasNext bool
-	idx, hasNext = matchTerimal(str, idx, "and")
-	if hasNext {
+	idx, ok = matchTerminal(str, idx, "and")
+	if ok {
 		next, err := parseExpr(str, idx)
 		if err != nil {
-			return ret, err
+			return nil, err
 		}
 		ret = append(ret, next...)
+	} else if idx < len(str) {
+		return nil, fmt.Errorf("only 'and' can be used to combine expressions in '%s'", str)
 	}
 	return ret, nil
 }
@@ -236,7 +234,7 @@ func nextNonSpaceRune(str string, idx int) (rune, int, bool) {
 	return r, idx, ok
 }
 
-func matchTerimal(str string, idx int, terminal string) (int, bool) {
+func matchTerminal(str string, idx int, terminal string) (int, bool) {
 	var ok bool
 	for _, r := range terminal {
 		idx, ok = matchRune(str, idx, r)
