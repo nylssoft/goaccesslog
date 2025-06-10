@@ -28,30 +28,33 @@ func TestInit(t *testing.T) {
 	err = config.Init(filename)
 	assert.Error(t, err)
 
+	logfile := ""
+	dbfile := ""
+	nginxfile := ""
 	goodRuleName := ""
 	goodRuleCondition := ""
 	badRuleName := ""
 	badRuleCondition := ""
 	// missing log filename in config
 	filename = path.Join(tempDir, "config.json")
-	createConfigFile(t, filename, "", "", "", goodRuleName, goodRuleCondition, badRuleName, badRuleCondition)
+	createConfigFile(t, filename, logfile, dbfile, nginxfile, goodRuleName, goodRuleCondition, badRuleName, badRuleCondition)
 	err = config.Init(filename)
 	assert.Error(t, err)
 
 	// missing database filename in config
-	logfile := path.Join(tempDir, "test.log")
-	createConfigFile(t, filename, logfile, "", "", goodRuleName, goodRuleCondition, badRuleName, badRuleCondition)
+	logfile = path.Join(tempDir, "test.log")
+	createConfigFile(t, filename, logfile, dbfile, nginxfile, goodRuleName, goodRuleCondition, badRuleName, badRuleCondition)
 	err = config.Init(filename)
 	assert.Error(t, err)
 
 	// missing nginx access log filename in config
-	dbfile := path.Join(tempDir, "test.db")
-	createConfigFile(t, filename, logfile, dbfile, "", goodRuleName, goodRuleCondition, badRuleName, badRuleCondition)
+	dbfile = path.Join(tempDir, "test.db")
+	createConfigFile(t, filename, logfile, dbfile, nginxfile, goodRuleName, goodRuleCondition, badRuleName, badRuleCondition)
 	err = config.Init(filename)
 	assert.Error(t, err)
 
-	// missing nginx access log filename does not exist
-	nginxfile := path.Join(tempDir, "test-nginx.log")
+	// nginx access log filename does not exist
+	nginxfile = path.Join(tempDir, "test-nginx.log")
 	createConfigFile(t, filename, logfile, dbfile, nginxfile, goodRuleName, goodRuleCondition, badRuleName, badRuleCondition)
 	err = config.Init(filename)
 	assert.Error(t, err)
@@ -93,12 +96,11 @@ func TestInit(t *testing.T) {
 	assert.Equal(t, nginxfile, config.AccessLogFilename())
 	assert.Equal(t, dbfile, config.DatabaseFilename())
 
-	// rule with sane name reused
+	// rule with same name is reused
 	badRuleName = goodRuleName
 	createConfigFile(t, filename, logfile, dbfile, nginxfile, goodRuleName, goodRuleCondition, badRuleName, badRuleCondition)
 	err = config.Init(filename)
 	assert.Error(t, err)
-
 }
 
 func TestIsMaliciousRequest(t *testing.T) {
