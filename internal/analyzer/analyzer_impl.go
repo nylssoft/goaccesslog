@@ -48,7 +48,7 @@ func (analyzer *analyzer_impl) Analyze(lastTimeLocal time.Time) (time.Time, erro
 			log.Printf("ERROR: Failed to parse log line '%s': %s\n", line, err.Error())
 			continue
 		}
-		if logLine.TimeLocal.Compare(lastTimeLocal) >= 0 {
+		if len(logLine.RemoteAddr) > 0 && logLine.TimeLocal.Compare(lastTimeLocal) >= 0 {
 			skipped, err := analyzer.insertLogLine(logLine, hashLine(line))
 			if err != nil {
 				log.Printf("ERROR: Failed to insert log line '%s': %s\n", line, err.Error())
