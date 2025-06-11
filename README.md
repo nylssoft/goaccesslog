@@ -86,3 +86,7 @@ Start new bash
 - curl localhost
 - wait 1 minute
 - sudo ./sqlite3 ../goaccesslog/goaccesslog.db "select * from accesslog;"
+
+### run unit tests and build test coverage
+- go test ./... -coverprofile=cover.out
+- go tool cover -html=cover.out
