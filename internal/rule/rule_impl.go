@@ -104,7 +104,7 @@ func parseExpr(str string, idx int) ([]Expression, error) {
 	var err error
 	op, idx, err = parseFunction(str, idx)
 	if err != nil {
-		return nil, fmt.Errorf("cannot parse function in '%s' at position %d: %s", str, idx, err.Error())
+		return nil, fmt.Errorf("cannot parse function in '%s' at position %d: %w", str, idx, err)
 	}
 	idx, ok = matchRune(str, idx, '(')
 	if !ok {
@@ -112,7 +112,7 @@ func parseExpr(str string, idx int) ([]Expression, error) {
 	}
 	prop, idx, err = parseProperty(op, str, idx)
 	if err != nil {
-		return nil, fmt.Errorf("cannot parse property in '%s' at position %d: %s", str, idx, err.Error())
+		return nil, fmt.Errorf("cannot parse property in '%s' at position %d: %w", str, idx, err)
 	}
 	idx, ok = matchRune(str, idx, ',')
 	if !ok {
@@ -120,7 +120,7 @@ func parseExpr(str string, idx int) ([]Expression, error) {
 	}
 	values, idx, err = parseValues(str, idx, isIntType(prop))
 	if err != nil {
-		return nil, fmt.Errorf("cannot parse values in '%s' at position %d: %s", str, idx, err.Error())
+		return nil, fmt.Errorf("cannot parse values in '%s' at position %d: %w", str, idx, err)
 	}
 	idx, ok = matchRune(str, idx, ')')
 	if !ok {

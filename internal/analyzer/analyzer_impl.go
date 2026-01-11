@@ -4,6 +4,7 @@ import (
 	"crypto/md5"
 	"database/sql"
 	"encoding/hex"
+	"fmt"
 	"log"
 	"os"
 	"strings"
@@ -73,7 +74,10 @@ func (analyzer *analyzer_impl) Analyze(lastTimeLocal time.Time) (time.Time, erro
 }
 
 func (analyzer *analyzer_impl) insertLogLine(logLine parser.LogLine, hash string) (bool, error) {
-	analyzer.initDatabase()
+	err := analyzer.initDatabase()
+	if err != nil {
+		return false, err
+	}
 	rows, err := analyzer.hashStmt.Query(hash)
 	if err != nil {
 		return false, err
@@ -96,7 +100,7 @@ func (analyzer *analyzer_impl) initDatabase() error {
 		var fileInfo os.FileInfo
 		fileInfo, err = os.Stat(analyzer.config.DatabaseFilename())
 		if err == nil && fileInfo.Size() > size_1G {
-			log.Fatal("Database file is too large.")
+			return fmt.Errorf("database file is too large (%d bytes)", fileInfo.Size())
 		}
 		var db *sql.DB
 		db, err = sql.Open("sqlite3", analyzer.config.DatabaseFilename())

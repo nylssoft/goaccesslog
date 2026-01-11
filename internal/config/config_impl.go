@@ -152,7 +152,7 @@ func parseRule(cr configRule) ([]rule.Expression, error) {
 	}
 	expressions, err := rule.ParseCondition(cr.Condition)
 	if err != nil {
-		return nil, fmt.Errorf("failed to parse rule '%s': %s", cr.Name, err.Error())
+		return nil, fmt.Errorf("failed to parse rule '%s': %w", cr.Name, err)
 	}
 	return expressions, err
 }
