@@ -17,6 +17,7 @@ type configRule struct {
 }
 
 type config_impl struct {
+	RCE         RCEProtection `json:"rceProtection"`
 	Expressions map[string][]rule.Expression
 	Nginx       struct {
 		AccessLogFilename string `json:"accessLogFilename"`
@@ -37,12 +38,16 @@ type config_impl struct {
 }
 
 func (cfg *config_impl) Init(filename string) error {
+	cfg.RCE = RCEProtection{}
 	data, err := os.ReadFile(filename)
 	if err == nil {
 		err = json.Unmarshal(data, &cfg)
 	}
 	if err != nil {
 		return err
+	}
+	if err := cfg.RCE.validate(); err != nil {
+		return fmt.Errorf("rceProtection: %w", err)
 	}
 	fmt.Println("Copies nginx access log file entries into sqlite database and locks malicious IP addresses.")
 	fmt.Println("  config file          :", filename)
@@ -88,6 +93,10 @@ func (cfg *config_impl) Init(filename string) error {
 
 func (cfg *config_impl) IsVerbose() bool {
 	return cfg.Logger.Verbose
+}
+
+func (cfg *config_impl) RCEProtection() RCEProtection {
+	return cfg.RCE
 }
 
 func (cfg *config_impl) AccessLogFilename() string {

@@ -1,6 +1,7 @@
 package config
 
 import (
+	"encoding/json"
 	"os"
 	"path"
 	"testing"
@@ -9,6 +10,44 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+func TestRCEProtection(t *testing.T) {
+	var disabled RCEProtection
+	require.NoError(t, disabled.validate())
+	assert.False(t, disabled.Enabled)
+	valid := `{"enabled":true,"targets":[{"uid":33,"allowedExecutables":["/usr/sbin/nginx"]}]}`
+	var settings RCEProtection
+	require.NoError(t, json.Unmarshal([]byte(valid), &settings))
+	require.NoError(t, settings.validate())
+	assert.Equal(t, "monitor", settings.Mode)
+	assert.Equal(t, "1s", settings.PollInterval)
+	assert.Equal(t, "10s", settings.Response.ActionTimeout)
+	for _, input := range []string{
+		`{"enabled":true,"mode":"invalid"}`,
+		`{"enabled":true,"pollInterval":"0s"}`,
+		`{"enabled":true,"response":{"actionTimeout":"bad"}}`,
+		`{"enabled":true}`,
+		`{"enabled":true,"targets":[{"allowedExecutables":["/bin/sh"]}]}`,
+		`{"enabled":true,"targets":[{"uid":0,"allowedExecutables":["/bin/sh"]}]}`,
+		`{"enabled":true,"targets":[{"uid":33}]}`,
+		`{"enabled":true,"targets":[{"uid":33,"allowedExecutables":["nginx"]}]}`,
+		`{"enabled":true,"targets":[{"uid":33,"allowedExecutables":["/bin/sh"]},{"uid":33,"allowedExecutables":["/bin/sh"]}]}`,
+	} {
+		t.Run(input, func(t *testing.T) {
+			var invalid RCEProtection
+			require.NoError(t, json.Unmarshal([]byte(input), &invalid))
+			assert.Error(t, invalid.validate())
+		})
+	}
+	settings.Mode = "enforce"
+	assert.Error(t, settings.validate())
+	settings.Response.KillDetectedProcess = true
+	assert.Error(t, settings.validate())
+	settings.Response.LatchFile = "/var/lib/goaccesslog/rce-lockdown.json"
+	require.NoError(t, settings.validate())
+	settings.Response.StopServices = []string{"--help"}
+	assert.Error(t, settings.validate())
+}
 
 func TestInit(t *testing.T) {
 	tempDir := t.TempDir()

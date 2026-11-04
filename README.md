@@ -12,6 +12,64 @@ Start the program to see the required log format.
 
 The program is intended to be used on linux servers.
 
+## Optional RCE kill-switch
+
+The `rceProtection` section in [sample.json](configs/sample.json) enables a
+separate Linux process monitor. It is disabled by default; existing configurations
+continue to work unchanged. It does not depend on HTTP rules or access-log activity.
+
+- Set `enabled` to `true` and begin with `mode: "monitor"`. This only logs
+    unexpected executables, without killing processes, stopping services, or creating
+    a lockdown latch.
+- Each target requires an explicit non-root `uid` and a nonempty
+    `allowedExecutables` list of exact, absolute executable paths. UID 33 is commonly
+    `www-data`; check your server. Paths must match `/proc/<pid>/exe`, including
+    resolved symlinks. Do not copy the example paths without checking them.
+- All four process UIDs (real, effective, saved, filesystem) are considered.
+    Every matching target's allowlist must permit the executable. Names and command
+    lines are not trusted as process identity.
+- `pollInterval` defaults to `"1s"`. `response.actionTimeout` defaults to `"10s"`
+    per service command. Both must be positive Go duration strings.
+- After reviewing legitimate workloads, choose `mode: "enforce"`. Set
+    `killDetectedProcess`, `stopServices`, or both. Service names must end in
+    `.service`; include only services installed on your server. Commands run directly
+    through systemctl, without a shell, with bounded execution time.
+
+Protection requires root, readable host `/proc` entries, and a Linux kernel with
+pidfd support (normally Linux 5.3 or newer). Enforcement with service stops also
+requires a working systemd/systemctl setup. Startup fails if these checks or the
+initial process scan fail. Runtime scan and response failures are logged; failed
+service stops and latch writes are retried. Container privileges and restricted
+`/proc` mounts may prevent inspection even when running as root.
+
+On an unexpected executable in enforce mode, goaccesslog records the incident in
+`response.latchFile`, signals the process using its pidfd if requested, and stops
+the configured services. The latch uses atomic writes and survives application
+restarts. Its directory and file must be root-owned and not group/world writable;
+a missing directory is created with mode 0700. Keep configuration, executable
+paths, and all latch-directory ancestors under administrator control.
+
+While latched, service stops are reapplied on every scan, access-log analysis is
+paused, and existing goaccesslog IP bans are not released on startup or shutdown.
+On restart in enforce mode, services from both the recorded incident and current
+configuration are stopped again. Recorded PIDs are never killed after restart.
+No additional firewall isolation is installed: stopping web services does not
+isolate the host or terminate every process belonging to the web user.
+
+To recover, stop goaccesslog, investigate and remediate the incident, retain a copy
+of its incident record, then remove the latch file explicitly. Review existing
+firewall bans before restarting goaccesslog and the affected services. Removing
+the file while goaccesslog is running does not clear its in-memory lockdown.
+Disabling protection or switching to monitor mode deliberately bypasses latch
+enforcement; protect write access to the configuration.
+
+This detects unexpected processes, not RCE conclusively. Polling misses short-lived
+processes, and arbitrary code inside an allowed executable or interpreter is not
+detected. A deleted executable has a different `/proc` path and is not implicitly
+allowed, so upgrades of running services can trigger detection. An attacker may
+also intentionally trigger a service outage. Use narrow allowlists and combine
+this containment feature with patching, AppArmor/SELinux, and service sandboxing.
+
 ## How to build
 
 - Install the required go version (see go.mod).

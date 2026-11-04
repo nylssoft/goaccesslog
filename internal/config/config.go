@@ -5,6 +5,7 @@ type Config interface {
 	IsVerbose() bool
 	AccessLogFilename() string
 	DatabaseFilename() string
+	RCEProtection() RCEProtection
 	IsMaliciousRequest(ip string, protocol string, uri string, status int) bool
 }
 

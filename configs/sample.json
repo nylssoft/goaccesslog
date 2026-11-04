@@ -11,6 +11,31 @@
         "maxAge": 7,
         "verbose": false
     },
+    "rceProtection": {
+        "enabled": false,
+        "mode": "monitor",
+        "pollInterval": "1s",
+        "targets": [
+            {
+                "uid": 33,
+                "allowedExecutables": [
+                    "/usr/sbin/nginx",
+                    "/usr/sbin/apache2",
+                    "/usr/sbin/php-fpm8.3"
+                ]
+            }
+        ],
+        "response": {
+            "killDetectedProcess": true,
+            "stopServices": [
+                "nginx.service",
+                "apache2.service",
+                "php8.3-fpm.service"
+            ],
+            "actionTimeout": "10s",
+            "latchFile": "/var/lib/goaccesslog/rce-lockdown.json"
+        }
+    },
     "rules": {
         "good": [
             {
