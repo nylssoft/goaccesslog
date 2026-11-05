@@ -28,6 +28,10 @@ continue to work unchanged. It does not depend on HTTP rules or access-log activ
 - All four process UIDs (real, effective, saved, filesystem) are considered.
     Every matching target's allowlist must permit the executable. Names and command
     lines are not trusted as process identity.
+- Every poll rechecks existing PIDs as well as new ones. Process inspection results
+    are not cached: a process can change its executable or UIDs without changing its
+    PID. Status parsing and allowlist lookups are optimized without increasing the
+    detection interval.
 - `pollInterval` defaults to `"1s"`. `response.actionTimeout` defaults to `"10s"`
     per service command. Both must be positive Go duration strings.
 - After reviewing legitimate workloads, choose `mode: "enforce"`. Set

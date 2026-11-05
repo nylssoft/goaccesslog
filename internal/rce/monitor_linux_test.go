@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
@@ -77,6 +78,7 @@ func testMonitor(t *testing.T, mode string) (*Monitor, *fakeSystem) {
 		},
 		system: system, pending: make(map[string]bool), seen: make(map[string]bool),
 	}
+	monitor.allowlists = executableAllowlists(monitor.settings.Targets)
 	return monitor, system
 }
 
@@ -204,4 +206,152 @@ func TestLinuxInspect(t *testing.T) {
 	missing, err := system.inspect(1 << 30)
 	require.NoError(t, err)
 	assert.Nil(t, missing)
+}
+
+func TestParseProcessStatus(t *testing.T) {
+	for _, test := range []struct {
+		name string
+		data string
+		uids [4]uint32
+		dead bool
+		fail bool
+	}{
+		{name: "four identities", data: "Name:\tnginx\nState:\tS (sleeping)\nUid:\t33\t34\t35\t36\nGid:\t33\n", uids: [4]uint32{33, 34, 35, 36}},
+		{name: "state after UIDs", data: "Uid: 1 2 3 4\nState: R (running)", uids: [4]uint32{1, 2, 3, 4}},
+		{name: "maximum UID", data: "State: S\nUid: 0 4294967295 33 0", uids: [4]uint32{0, ^uint32(0), 33, 0}},
+		{name: "zombie", data: "State:\tZ (zombie)\n", dead: true},
+		{name: "dead", data: "State:\tX (dead)\n", dead: true},
+		{name: "missing UIDs", data: "State: S\nGid: 33 33 33 33\n", fail: true},
+		{name: "too few UIDs", data: "State: S\nUid: 33 33 33\n", fail: true},
+		{name: "too many UIDs", data: "State: S\nUid: 33 33 33 33 33\n", fail: true},
+		{name: "invalid UID", data: "State: S\nUid: 33 invalid 33 33\n", fail: true},
+		{name: "negative UID", data: "State: S\nUid: 33 -1 33 33\n", fail: true},
+		{name: "overflow UID", data: "State: S\nUid: 33 4294967296 33 33\n", fail: true},
+		{name: "empty", fail: true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			uids, dead, err := parseProcessStatus([]byte(test.data))
+			if test.fail {
+				require.Error(t, err)
+				return
+			}
+			require.NoError(t, err)
+			assert.Equal(t, test.uids, uids)
+			assert.Equal(t, test.dead, dead)
+		})
+	}
+}
+
+func TestDisabledMonitorIgnoresTargets(t *testing.T) {
+	monitor, err := New(context.Background(), config.RCEProtection{
+		Targets: []config.RCETarget{{}},
+	})
+	require.NoError(t, err)
+	require.NoError(t, monitor.Check(context.Background()))
+}
+
+func TestUnexpectedAllUIDs(t *testing.T) {
+	uidA, uidB := uint32(33), uint32(34)
+	monitor := &Monitor{allowlists: executableAllowlists([]config.RCETarget{
+		{UID: &uidA, AllowedExecutables: []string{"/shared", "/only-a"}},
+		{UID: &uidB, AllowedExecutables: []string{"/shared"}},
+	})}
+	for i := 0; i < 4; i++ {
+		uids := []uint32{1000, 1000, 1000, 1000}
+		uids[i] = uidB
+		uid, unexpected := monitor.unexpected(&process{UIDs: uids, Executable: "/only-a"})
+		assert.True(t, unexpected)
+		assert.Equal(t, uidB, uid)
+	}
+	_, unexpected := monitor.unexpected(&process{UIDs: []uint32{uidA, uidB}, Executable: "/shared"})
+	assert.False(t, unexpected)
+	uid, unexpected := monitor.unexpected(&process{UIDs: []uint32{uidA, uidB}, Executable: "/only-a"})
+	assert.True(t, unexpected)
+	assert.Equal(t, uidB, uid)
+	_, unexpected = monitor.unexpected(&process{UIDs: []uint32{1000}, Executable: "/unexpected"})
+	assert.False(t, unexpected)
+}
+
+func TestCheckReinspectsSamePID(t *testing.T) {
+	for _, change := range []string{"executable", "UID"} {
+		t.Run(change, func(t *testing.T) {
+			monitor, system := testMonitor(t, "enforce")
+			proc := &process{PID: 100, UIDs: []uint32{33, 33, 33, 33}, Executable: "/usr/sbin/nginx"}
+			if change == "UID" {
+				proc.UIDs = []uint32{1000, 1000, 1000, 1000}
+				proc.Executable = "/usr/bin/bash"
+			}
+			system.processes = []*process{proc}
+			require.NoError(t, monitor.Check(context.Background()))
+			assert.False(t, monitor.Locked())
+			assert.Empty(t, system.killed)
+			if change == "executable" {
+				proc.Executable = "/usr/bin/bash"
+			} else {
+				proc.UIDs[3] = 33
+			}
+			require.NoError(t, monitor.Check(context.Background()))
+			assert.True(t, monitor.Locked())
+			assert.Equal(t, []int{100}, system.killed)
+			assert.Equal(t, 2, system.closed)
+		})
+	}
+}
+
+func TestLinuxPIDs(t *testing.T) {
+	system := &linuxSystem{}
+	pids, err := system.pids()
+	require.NoError(t, err)
+	assert.Contains(t, pids, os.Getpid())
+	seen := make(map[int]bool)
+	for _, pid := range pids {
+		assert.Positive(t, pid)
+		assert.False(t, seen[pid], "duplicate PID %d", pid)
+		seen[pid] = true
+	}
+}
+
+func BenchmarkLinuxInspect(b *testing.B) {
+	system := &linuxSystem{targets: map[uint32]bool{uint32(os.Getuid()): true}}
+	b.ReportAllocs()
+	for b.Loop() {
+		proc, err := system.inspect(os.Getpid())
+		if err != nil || proc == nil {
+			b.Fatalf("inspect: process=%v, error=%v", proc, err)
+		}
+		system.close(proc)
+	}
+}
+
+func BenchmarkLinuxPIDs(b *testing.B) {
+	system := &linuxSystem{}
+	b.ReportAllocs()
+	for b.Loop() {
+		if _, err := system.pids(); err != nil {
+			b.Fatal(err)
+		}
+	}
+}
+
+func BenchmarkUnexpected(b *testing.B) {
+	for _, count := range []int{1, 100} {
+		b.Run(fmt.Sprintf("targets=%d", count), func(b *testing.B) {
+			monitor := &Monitor{}
+			for i := 1; i <= count; i++ {
+				uid := uint32(i)
+				monitor.settings.Targets = append(monitor.settings.Targets, config.RCETarget{
+					UID: &uid, AllowedExecutables: []string{"/usr/sbin/nginx", "/usr/sbin/apache2"},
+				})
+			}
+			monitor.allowlists = executableAllowlists(monitor.settings.Targets)
+			proc := &process{UIDs: []uint32{uint32(count), uint32(count), uint32(count), uint32(count)}, Executable: "/usr/sbin/nginx"}
+			b.ReportAllocs()
+			b.ResetTimer()
+			for b.Loop() {
+				if _, unexpected := monitor.unexpected(proc); unexpected {
+					b.Fatal("allowed process rejected")
+				}
+			}
+		})
+	}
 }

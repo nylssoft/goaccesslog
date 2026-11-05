@@ -1,6 +1,7 @@
 package rce
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -43,12 +44,13 @@ type incident struct {
 }
 
 type Monitor struct {
-	settings config.RCEProtection
-	system   processSystem
-	locked   atomic.Bool
-	pending  map[string]bool
-	seen     map[string]bool
-	evidence *incident
+	settings   config.RCEProtection
+	allowlists map[uint32]map[string]bool
+	system     processSystem
+	locked     atomic.Bool
+	pending    map[string]bool
+	seen       map[string]bool
+	evidence   *incident
 }
 
 func New(ctx context.Context, settings config.RCEProtection) (*Monitor, error) {
@@ -59,6 +61,7 @@ func New(ctx context.Context, settings config.RCEProtection) (*Monitor, error) {
 	if os.Geteuid() != 0 {
 		return nil, fmt.Errorf("RCE protection requires root to inspect all target processes")
 	}
+	monitor.allowlists = executableAllowlists(settings.Targets)
 	system := &linuxSystem{targets: make(map[uint32]bool)}
 	for _, target := range settings.Targets {
 		system.targets[*target.UID] = true
@@ -198,24 +201,27 @@ func (monitor *Monitor) Check(ctx context.Context) error {
 }
 
 func (monitor *Monitor) unexpected(proc *process) (uint32, bool) {
-	for _, uid := range proc.UIDs {
-		for _, target := range monitor.settings.Targets {
-			if uid != *target.UID {
-				continue
-			}
-			allowed := false
-			for _, executable := range target.AllowedExecutables {
-				if proc.Executable == executable {
-					allowed = true
-					break
-				}
-			}
-			if !allowed {
-				return uid, true
-			}
+	for i, uid := range proc.UIDs {
+		if i > 0 && uid == proc.UIDs[i-1] {
+			continue
+		}
+		if allowed, targeted := monitor.allowlists[uid]; targeted && !allowed[proc.Executable] {
+			return uid, true
 		}
 	}
 	return 0, false
+}
+
+func executableAllowlists(targets []config.RCETarget) map[uint32]map[string]bool {
+	allowlists := make(map[uint32]map[string]bool, len(targets))
+	for _, target := range targets {
+		allowed := make(map[string]bool, len(target.AllowedExecutables))
+		for _, executable := range target.AllowedExecutables {
+			allowed[executable] = true
+		}
+		allowlists[*target.UID] = allowed
+	}
+	return allowlists
 }
 
 func (monitor *Monitor) actionTimeout() time.Duration {
@@ -311,13 +317,21 @@ type linuxSystem struct {
 }
 
 func (system *linuxSystem) pids() ([]int, error) {
-	entries, err := os.ReadDir("/proc")
+	directory, err := os.Open("/proc")
+	if err != nil {
+		return nil, err
+	}
+	defer directory.Close()
+	names, err := directory.Readdirnames(-1)
 	if err != nil {
 		return nil, err
 	}
 	var pids []int
-	for _, entry := range entries {
-		pid, err := strconv.Atoi(entry.Name())
+	for _, name := range names {
+		if len(name) == 0 || name[0] < '0' || name[0] > '9' {
+			continue
+		}
+		pid, err := strconv.Atoi(name)
 		if err == nil && pid > 0 {
 			pids = append(pids, pid)
 		}
@@ -347,32 +361,31 @@ func (system *linuxSystem) inspect(pid int) (*process, error) {
 	if err != nil {
 		return nil, err
 	}
-	matched := false
-	for _, line := range strings.Split(string(data), "\n") {
-		fields := strings.Fields(line)
-		if len(fields) >= 2 && fields[0] == "State:" && (fields[1] == "Z" || fields[1] == "X") {
-			return nil, nil
-		}
-		if len(fields) == 5 && fields[0] == "Uid:" {
-			for _, field := range fields[1:] {
-				uid, err := strconv.ParseUint(field, 10, 32)
-				if err != nil {
-					return nil, err
-				}
-				proc.UIDs = append(proc.UIDs, uint32(uid))
-				matched = matched || system.targets[uint32(uid)]
-			}
-		}
+	uids, dead, err := parseProcessStatus(data)
+	if err != nil {
+		return nil, err
 	}
-	if len(proc.UIDs) != 4 {
-		return nil, fmt.Errorf("missing process UIDs")
+	if dead {
+		return nil, nil
+	}
+	proc.UIDs = uids[:]
+	matched := false
+	for _, uid := range uids {
+		matched = matched || system.targets[uid]
 	}
 	if !matched {
 		return nil, nil
 	}
 	proc.Executable, err = os.Readlink(fmt.Sprintf("/proc/%d/exe", pid))
 	var pollFDs = []unix.PollFd{{Fd: int32(fd), Events: unix.POLLIN}}
-	ready, pollErr := unix.Poll(pollFDs, 0)
+	var ready int
+	var pollErr error
+	for {
+		ready, pollErr = unix.Poll(pollFDs, 0)
+		if !errors.Is(pollErr, unix.EINTR) {
+			break
+		}
+	}
 	if pollErr != nil {
 		return nil, pollErr
 	}
@@ -384,6 +397,44 @@ func (system *linuxSystem) inspect(pid int) (*process, error) {
 	}
 	keep = true
 	return proc, nil
+}
+
+func parseProcessStatus(data []byte) ([4]uint32, bool, error) {
+	var uids [4]uint32
+	var haveUIDs, haveState bool
+	for len(data) > 0 {
+		line, rest, _ := bytes.Cut(data, []byte{'\n'})
+		data = rest
+		if bytes.HasPrefix(line, []byte("State:")) {
+			fields := bytes.Fields(line)
+			if len(fields) >= 2 {
+				if bytes.Equal(fields[1], []byte("Z")) || bytes.Equal(fields[1], []byte("X")) {
+					return uids, true, nil
+				}
+				haveState = true
+			}
+		} else if bytes.HasPrefix(line, []byte("Uid:")) {
+			fields := bytes.Fields(line)
+			if len(fields) != 5 {
+				return uids, false, fmt.Errorf("missing process UIDs")
+			}
+			for i, field := range fields[1:] {
+				uid, err := strconv.ParseUint(string(field), 10, 32)
+				if err != nil {
+					return uids, false, err
+				}
+				uids[i] = uint32(uid)
+			}
+			haveUIDs = true
+		}
+		if haveState && haveUIDs {
+			break
+		}
+	}
+	if !haveUIDs {
+		return uids, false, fmt.Errorf("missing process UIDs")
+	}
+	return uids, false, nil
 }
 
 func (system *linuxSystem) kill(proc *process) error {
