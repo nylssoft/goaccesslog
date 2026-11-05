@@ -30,7 +30,7 @@ jobs:
         run: go test ./...
 
       - name: Upload binary
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: goaccesslog-linux-amd64
           path: goaccesslog
