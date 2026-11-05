@@ -72,10 +72,17 @@ this containment feature with patching, AppArmor/SELinux, and service sandboxing
 
 ## How to build
 
-- Install the required go version (see go.mod).
-- Set CGO_ENBALED=1 and install gcc (required to build sqlite).
+- Install Go 1.27.3 (see [go.mod](go.mod)).
+- Set CGO_ENABLED=1 and install gcc (required to build sqlite).
 - go build
 - Example setup for Windows WSL see below
+
+The [GitHub Actions build workflow](.github/workflows/build.yml) builds and tests
+all packages on Ubuntu for every push and pull request. It can also be run
+manually, uses the Go version from go.mod, and enables CGO for SQLite.
+Successful runs publish the Linux amd64 binary as the
+`goaccesslog-linux-amd64` artifact on the workflow run page. After downloading
+and extracting it, run `chmod +x goaccesslog` to restore executable permissions.
 
 ## Setup on Windows using WSL
 
@@ -106,15 +113,41 @@ Note: no other process should listen on port 80
 - curl localhost
 - sudo cat /var/log/nginx/access.log
 
-### install go
-- curl https://dl.google.com/go/go1.24.3.linux-amd64.tar.gz >go.tar.gz
+### install or upgrade Go
+
+These steps install Go 1.27.3 for Linux amd64 inside WSL. To upgrade an existing
+manual installation in `/usr/local/go`, use the same steps: download and extract
+the new version first, then remove the old `/usr/local/go` directory before moving
+the new one into place. Do not extract a new release over an existing Go
+installation. Removing this directory does not remove your project or module cache.
+
+Run these commands from your WSL home directory, not from the project directory.
+The removal command below is only for a manual installation at `/usr/local/go`.
+If Go was installed using a package manager, upgrade or uninstall it through that
+package manager instead.
+
+- cd ~
+- curl --fail --location https://dl.google.com/go/go1.27.3.linux-amd64.tar.gz --output go.tar.gz
 - gunzip go.tar.gz
 - tar xf go.tar
 - sudo rm -rf /usr/local/go
 - sudo mv go /usr/local/
 - rm go.tar
-- export PATH=$PATH:/usr/local/go/bin
+- export PATH=/usr/local/go/bin:$PATH
+- hash -r
+- command -v go
 - go version
+
+Only continue to the next command if the previous one succeeds. Verify that
+`command -v go` reports `/usr/local/go/bin/go` and `go version` reports
+`go1.27.3 linux/amd64`. Keep `export PATH=/usr/local/go/bin:$PATH` in your
+`~/.profile` so new WSL sessions use this installation. If an older version still
+appears, run `type -a go` and check for other installations or shell aliases.
+
+After upgrading, return to the project directory, rebuild with `go build`, and
+run `go test ./...` with `CGO_ENABLED=1`. Redeploy the rebuilt binary and restart
+the running application: installing a newer Go compiler does not update binaries
+that were already built.
 
 ### download source
 - git clone https://github.com/nylssoft/goaccesslog.git
