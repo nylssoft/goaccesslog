@@ -270,6 +270,13 @@ func TestUnexpectedAllUIDs(t *testing.T) {
 	assert.Equal(t, uidB, uid)
 	_, unexpected = monitor.unexpected(&process{UIDs: []uint32{1000}, Executable: "/unexpected"})
 	assert.False(t, unexpected)
+	_, unexpected = monitor.unexpected(&process{UIDs: []uint32{uidA}, Executable: "/shared (deleted)"})
+	assert.False(t, unexpected)
+
+	deletedSuffixPath := "/path (deleted)"
+	monitor.allowlists[uidA][deletedSuffixPath] = true
+	_, unexpected = monitor.unexpected(&process{UIDs: []uint32{uidA}, Executable: deletedSuffixPath})
+	assert.False(t, unexpected)
 }
 
 func TestCheckReinspectsSamePID(t *testing.T) {

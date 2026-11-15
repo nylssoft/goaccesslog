@@ -69,8 +69,9 @@ enforcement; protect write access to the configuration.
 
 This detects unexpected processes, not RCE conclusively. Polling misses short-lived
 processes, and arbitrary code inside an allowed executable or interpreter is not
-detected. A deleted executable has a different `/proc` path and is not implicitly
-allowed, so upgrades of running services can trigger detection. An attacker may
+detected. Linux appends ` (deleted)` to `/proc` paths for unlinked executables;
+allowlist matching ignores that suffix, so upgrades of running services remain
+allowed when their original executable path is allowlisted. An attacker may
 also intentionally trigger a service outage. Use narrow allowlists and combine
 this containment feature with patching, AppArmor/SELinux, and service sandboxing.
 

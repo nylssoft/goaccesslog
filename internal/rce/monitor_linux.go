@@ -205,8 +205,10 @@ func (monitor *Monitor) unexpected(proc *process) (uint32, bool) {
 		if i > 0 && uid == proc.UIDs[i-1] {
 			continue
 		}
-		if allowed, targeted := monitor.allowlists[uid]; targeted && !allowed[proc.Executable] {
-			return uid, true
+		if allowed, targeted := monitor.allowlists[uid]; targeted {
+			if !allowed[proc.Executable] && !allowed[strings.TrimSuffix(proc.Executable, " (deleted)")] {
+				return uid, true
+			}
 		}
 	}
 	return 0, false
